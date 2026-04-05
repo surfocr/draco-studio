@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>DRACO Dataset Studio v5</title>
+<style>
+/* ── Setup Wizard Overlay ─────────────────────────────── */
+#setup-overlay{position:fixed;inset:0;background:rgba(6,8,16,0.97);z-index:100000;display:flex;align-items:center;justify-content:center;font-family:'Segoe UI',system-ui,sans-serif;color:#C8D8F5}
+#setup-overlay.hidden{display:none}
+.setup-card{background:#0D1222;border:1px solid #1A2440;border-radius:16px;padding:32px;max-width:600px;width:90%;box-shadow:0 0 60px rgba(0,220,255,0.08)}
+.setup-title{font-size:24px;font-weight:900;color:#fff;margin-bottom:4px;display:flex;align-items:center;gap:12px}
+.setup-title .logo{width:44px;height:44px;border-radius:9px;background:linear-gradient(135deg,#00DCFF,#B44FFF);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:#fff;box-shadow:0 0 14px rgba(0,220,255,0.4)}
+.setup-sub{font-size:12px;color:#607AAB;margin-bottom:24px}
+.setup-step{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#090D1A;border:1px solid #1A2440;border-radius:8px;margin-bottom:8px;transition:all 0.2s}
+.setup-step.active{border-color:#00DCFF;background:rgba(0,220,255,0.06)}
+.setup-step.done{border-color:#00FF9D;background:rgba(0,255,157,0.04)}
+.setup-step.error{border-color:#FF3E50;background:rgba(255,62,80,0.04)}
+.step-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.step-icon.pending{background:#12172A;color:#607AAB;border:1px solid #2A3B5E}
+.step-icon.running{background:rgba(0,220,255,0.15);color:#00DCFF;border:1px solid #00DCFF;animation:spin 1.2s linear infinite}
+.step-icon.done{background:rgba(0,255,157,0.15);color:#00FF9D;border:1px solid #00FF9D}
+.step-icon.error{background:rgba(255,62,80,0.15);color:#FF3E50;border:1px solid #FF3E50}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.step-text{flex:1;min-width:0}
+.step-name{font-size:13px;font-weight:700;color:#fff}
+.step-detail{font-size:10px;color:#607AAB;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.setup-actions{display:flex;gap:8px;margin-top:18px}
+.setup-btn{border:none;border-radius:8px;padding:10px 20px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;transition:all 0.15s}
+.setup-btn.primary{background:rgba(0,220,255,0.2);color:#00DCFF;border:1px solid #00DCFF}.setup-btn.primary:hover{background:#00DCFF;color:#000}
+.setup-btn.secondary{background:#12172A;color:#607AAB;border:1px solid #2A3B5E}.setup-btn.secondary:hover{border-color:#00DCFF;color:#00DCFF}
+.setup-log{background:#040610;border:1px solid #1A2440;border-radius:6px;padding:8px;max-height:120px;overflow-y:auto;font-family:monospace;font-size:10px;line-height:1.7;color:#00FF9D;margin-top:12px;display:none}
+.setup-log.show{display:block}
+
+/* ── Model Status Badge (injected into sidebar) ─────── */
+.model-status-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700}
+.model-status-badge.ready{background:rgba(0,255,157,0.15);color:#00FF9D;border:1px solid rgba(0,255,157,0.3)}
+.model-status-badge.loading{background:rgba(255,184,48,0.15);color:#FFB830;border:1px solid rgba(255,184,48,0.3)}
+.model-status-badge.offline{background:rgba(255,62,80,0.08);color:#FF3E50;border:1px solid rgba(255,62,80,0.2)}
+</style>
+</head>
+<body style="margin:0;padding:0;background:#060810">
+
+<!-- Setup Wizard (shown on first run or when sidecar not configured) -->
+<div id="setup-overlay" class="hidden">
+  <div class="setup-card">
+    <div class="setup-title">
+      <div class="logo">D</div>
+      <div>
+        <div>DRACO <span style="color:#00DCFF">Dataset Studio</span> <span style="font-size:11px;color:#B44FFF;background:rgba(180,79,255,0.12);border:1px solid #B44FFF;border-radius:3px;padding:1px 6px;margin-left:4px">v5</span></div>
+      </div>
+    </div>
+    <div class="setup-sub">AI-powered dataset curation — Setting up local AI pipeline</div>
+
+    <div id="setup-steps">
+      <div class="setup-step" id="step-python">
+        <div class="step-icon pending" id="icon-python">1</div>
+        <div class="step-text">
+          <div class="step-name">Python Environment</div>
+          <div class="step-detail" id="detail-python">Checking for Python 3.10+...</div>
+        </div>
+      </div>
+      <div class="setup-step" id="step-venv">
+        <div class="step-icon pending" id="icon-venv">2</div>
+        <div class="step-text">
+          <div class="step-name">Virtual Environment</div>
+          <div class="step-detail" id="detail-venv">Create isolated Python environment</div>
+        </div>
+      </div>
+      <div class="setup-step" id="step-packages">
+        <div class="step-icon pending" id="icon-packages">3</div>
+        <div class="step-text">
+          <div class="step-name">AI Packages</div>
+          <div class="step-detail" id="detail-packages">InsightFace, CLIP, Florence-2, PyTorch</div>
+        </div>
+      </div>
+      <div class="setup-step" id="step-models">
+        <div class="step-icon pending" id="icon-models">4</div>
+        <div class="step-text">
+          <div class="step-name">Download Models</div>
+          <div class="step-detail" id="detail-models">InsightFace buffalo_l (~330MB), CLIP ViT-L/14 (~890MB), Florence-2 (~460MB)</div>
+        </div>
+      </div>
+      <div class="setup-step" id="step-gpu">
+        <div class="step-icon pending" id="icon-gpu">5</div>
+        <div class="step-text">
+          <div class="step-name">GPU Detection</div>
+          <div class="step-detail" id="detail-gpu">Verify CUDA and RTX GPU acceleration</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="setup-log" class="setup-log"></div>
+
+    <div class="setup-actions">
+      <button class="setup-btn primary" id="setup-start-btn" onclick="startSetup()">Start Setup</button>
+      <button class="setup-btn secondary" onclick="skipSetup()">Skip (Browser-Only Mode)</button>
+      <button class="setup-btn secondary" id="setup-log-toggle" onclick="toggleSetupLog()" style="margin-left:auto">Show Log</button>
+    </div>
+  </div>
+</div>
+
+<!-- The v5 app is loaded here as an iframe-like embed -->
+<div id="draco-app-container" style="width:100%;height:100vh;overflow:hidden"></div>
+
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════
+// DRACO BRIDGE — Connects Electron IPC to the v4 app
+// ═══════════════════════════════════════════════════════
+
+const IS_ELECTRON = !!(window.draco && window.draco.isElectron);
+
+// ── Setup Wizard ────────────────────────────────────────
+let setupRunning = false;
+
+async function checkIfSetupNeeded() {
+  if (!IS_ELECTRON) return false;
+  try {
+    const status = await window.draco.python.status();
+    return !status.setupComplete;
+  } catch {
+    return true;
+  }
+}
+
+function showSetup() {
+  document.getElementById('setup-overlay').classList.remove('hidden');
+}
+
+function skipSetup() {
+  document.getElementById('setup-overlay').classList.add('hidden');
+}
+
+function toggleSetupLog() {
+  document.getElementById('setup-log').classList.toggle('show');
+}
+
+function updateStep(stepId, state, detail) {
+  const icon = document.getElementById(`icon-${stepId}`);
+  const detailEl = document.getElementById(`detail-${stepId}`);
+  const step = document.getElementById(`step-${stepId}`);
+  if (!icon) return;
+
+  icon.className = `step-icon ${state}`;
+  step.className = `setup-step ${state === 'running' ? 'active' : state === 'done' ? 'done' : state === 'error' ? 'error' : ''}`;
+  icon.textContent = state === 'done' ? '✓' : state === 'error' ? '✗' : state === 'running' ? '◎' : icon.textContent;
+  if (detail) detailEl.textContent = detail;
+}
+
+function appendLog(msg) {
+  const log = document.getElementById('setup-log');
+  log.innerHTML += `<div>${msg}</div>`;
+  log.scrollTop = log.scrollHeight;
+}
+
+async function startSetup() {
+  if (setupRunning || !IS_ELECTRON) return;
+  setupRunning = true;
+  document.getElementById('setup-start-btn').disabled = true;
+  document.getElementById('setup-start-btn').textContent = 'Setting up...';
+
+  // Listen for events from Python manager
+  window.draco.python.onEvent(({ event, data }) => {
+    if (event === 'log') appendLog(data);
+    if (event === 'setup:step') {
+      const { step, status, message } = data;
+      const stateMap = { running: 'running', done: 'done', error: 'error' };
+      updateStep(step, stateMap[status] || 'pending', message);
+    }
+  });
+
+  try {
+    // Step 1: Check Python
+    updateStep('python', 'running', 'Checking...');
+    const pyInfo = await window.draco.setup.checkPython();
+    if (pyInfo.found) {
+      updateStep('python', 'done', pyInfo.version);
+    } else {
+      updateStep('python', 'error', 'Python 3.10+ not found — install from python.org');
+      setupRunning = false;
+      return;
+    }
+
+    // Step 2: Create venv
+    updateStep('venv', 'running', 'Creating virtual environment...');
+    await window.draco.setup.createVenv();
+    updateStep('venv', 'done', 'Virtual environment ready');
+
+    // Step 3: Install packages
+    updateStep('packages', 'running', 'Installing packages (this takes a few minutes)...');
+    await window.draco.setup.installPackages();
+    updateStep('packages', 'done', 'All packages installed');
+
+    // Step 4: Models (will be downloaded on first use via the sidecar)
+    updateStep('models', 'running', 'Starting AI server...');
+    await window.draco.python.start();
+    updateStep('models', 'done', 'AI server running — models download on first use');
+
+    // Step 5: GPU
+    updateStep('gpu', 'running', 'Checking GPU...');
+    const gpuInfo = await window.draco.setup.checkGPU();
+    if (gpuInfo.cuda) {
+      updateStep('gpu', 'done', `${gpuInfo.device} (${gpuInfo.vram_gb}GB VRAM)`);
+    } else {
+      updateStep('gpu', 'done', 'CPU mode — install CUDA for GPU acceleration');
+    }
+
+    document.getElementById('setup-start-btn').textContent = 'Setup Complete!';
+    document.getElementById('setup-start-btn').style.background = 'rgba(0,255,157,0.2)';
+    document.getElementById('setup-start-btn').style.color = '#00FF9D';
+    document.getElementById('setup-start-btn').style.borderColor = '#00FF9D';
+
+    setTimeout(() => {
+      document.getElementById('setup-overlay').classList.add('hidden');
+    }, 1500);
+  } catch (e) {
+    appendLog(`Error: ${e.message}`);
+    document.getElementById('setup-start-btn').textContent = 'Retry Setup';
+    document.getElementById('setup-start-btn').disabled = false;
+  }
+  setupRunning = false;
+}
+
+// ── Load the v5 App ─────────────────────────────────────
+async function loadDracoApp() {
+  const container = document.getElementById('draco-app-container');
+
+  // Fetch and inject the v5 HTML
+  // In Electron: load from local file. In browser: load adjacent file.
+  let html = '';
+  try {
+    const resp = await fetch('../../DRACO_Dataset_Studio_v5.html');
+    html = await resp.text();
+  } catch {
+    try {
+      const resp = await fetch('../DRACO_Dataset_Studio_v5.html');
+      html = await resp.text();
+    } catch {
+      container.innerHTML = `<div style="padding:40px;color:#FF3E50;font-family:sans-serif">
+        <h2>Failed to load DRACO_Dataset_Studio_v5.html</h2>
+        <p>Make sure the file is in the project root directory.</p>
+      </div>`;
+      return;
+    }
+  }
+
+  // Inject the bridge script before </body>
+  const bridgeScript = `
+<script>
+// ═══════════════════════════════════════════════════════
+// ELECTRON BRIDGE — Enhanced features when running in Electron
+// ═══════════════════════════════════════════════════════
+(function(){
+  'use strict';
+  if(!window.draco || !window.draco.isElectron) return;
+  console.log('[DRACO] Electron bridge active');
+
+  // ── Enhanced File Opening ─────────────────────────
+  // Listen for files opened via File menu
+  window.draco.on('files:opened', async function(filePaths){
+    if(!filePaths || !filePaths.length) return;
+    console.log('[DRACO Bridge] Received', filePaths.length, 'files from dialog');
+    var loaded = 0, failed = 0;
+    for(var i = 0; i < filePaths.length; i++){
+      try {
+        var dataUrl = await window.draco.fs.readFileBase64(filePaths[i]);
+        var info = await window.draco.fs.getFileInfo(filePaths[i]);
+        if(typeof images !== 'undefined'){
+          images.push({
+            id: Math.random().toString(36).slice(2,10),
+            url: dataUrl,
+            name: info ? info.name : filePaths[i].split(/[\\/\\\\]/).pop(),
+            size: info ? info.size : 0,
+            filePath: filePaths[i],
+            cat: 'uncategorized',
+            detResult: null,
+            selected: false
+          });
+          loaded++;
+        }
+      } catch(e) {
+        console.warn('[DRACO Bridge] Failed to load:', filePaths[i], e);
+        failed++;
+      }
+    }
+    if(loaded > 0){
+      if(typeof afterLoad === 'function') afterLoad(loaded, 0, failed);
+      else if(typeof renderAll === 'function'){
+        document.getElementById('upz').style.display = 'none';
+        document.getElementById('app').style.display = 'grid';
+        document.getElementById('hdr-r').style.display = 'flex';
+        renderAll();
+      }
+      if(typeof showToast === 'function') showToast('◈ Loaded ' + loaded + ' images');
+      if(typeof modelReady !== 'undefined' && modelReady && typeof runAll === 'function') runAll();
+    }
+  });
+
+  // ── Python Sidecar Integration ────────────────────
+  // Enhanced face analysis using InsightFace 512-d when available
+  var _originalDetectOne = typeof detectOne === 'function' ? detectOne : null;
+
+  window._dracoEnhancedAnalysis = async function(imageB64){
+    try {
+      var result = await window.draco.python.call('/quality-assess', {image: imageB64});
+      return result;
+    } catch(e) {
+      console.warn('[DRACO Bridge] Sidecar quality-assess failed, using browser:', e.message);
+      return null;
+    }
+  };
+
+  window._dracoGetFaceEmbedding = async function(imageB64){
+    try {
+      var result = await window.draco.python.call('/batch-faces', {images: [imageB64]});
+      if(result && result.results && result.results[0] && result.results[0].embedding){
+        return result.results[0];
+      }
+      return null;
+    } catch(e) {
+      return null;
+    }
+  };
+
+  window._dracoCaption = async function(imageB64){
+    try {
+      var result = await window.draco.python.call('/caption', {image: imageB64});
+      return result ? result.caption : null;
+    } catch(e) {
+      return null;
+    }
+  };
+
+  // ── Sidecar Status Badge ──────────────────────────
+  async function updateSidecarBadge(){
+    try {
+      var status = await window.draco.python.status();
+      var badge = document.getElementById('draco-sidecar-badge');
+      if(!badge){
+        badge = document.createElement('div');
+        badge.id = 'draco-sidecar-badge';
+        badge.style.cssText = 'font-size:9px;padding:2px 6px;border-radius:3px;margin-top:4px;cursor:pointer;display:inline-block';
+        badge.onclick = function(){ if(typeof setTab==='function') setTab('local'); };
+        var target = document.getElementById('gpu-info');
+        if(target) target.parentElement.appendChild(badge);
+      }
+      if(status.running){
+        badge.style.background = 'rgba(0,255,157,0.12)';
+        badge.style.color = '#00FF9D';
+        badge.style.border = '1px solid rgba(0,255,157,0.3)';
+        badge.textContent = '◈ Sidecar: ArcFace 512-d ready';
+      } else if(status.setupComplete){
+        badge.style.background = 'rgba(255,184,48,0.12)';
+        badge.style.color = '#FFB830';
+        badge.style.border = '1px solid rgba(255,184,48,0.3)';
+        badge.textContent = '◈ Sidecar: Stopped (click Local AI)';
+      } else {
+        badge.style.background = 'rgba(96,122,171,0.08)';
+        badge.style.color = '#607AAB';
+        badge.style.border = '1px solid rgba(42,59,94,0.5)';
+        badge.textContent = '◈ Setup needed (AI menu)';
+      }
+    } catch(e){}
+  }
+  setInterval(updateSidecarBadge, 5000);
+  setTimeout(updateSidecarBadge, 2000);
+
+  // ── Menu event handlers ───────────────────────────
+  window.draco.on('menu:help', function(){
+    if(typeof showHelpOverlay === 'function') showHelpOverlay();
+  });
+  window.draco.on('menu:setup-wizard', function(){
+    // Re-show setup wizard
+    var overlay = window.parent.document.getElementById('setup-overlay');
+    if(overlay) overlay.classList.remove('hidden');
+  });
+
+  // ── Project Save ──────────────────────────────────
+  window.draco.on('menu:save-project', async function(){
+    try {
+      var imgList = typeof images !== 'undefined' ? images : [];
+      var projectData = {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        images: imgList.map(function(img){
+          return {
+            id: img.id,
+            name: img.name,
+            size: img.size,
+            filePath: img.filePath,
+            cat: img.cat,
+            detResult: img.detResult,
+            selected: false
+            // base64 data URLs are intentionally excluded — re-read from filePath on load
+          };
+        })
+      };
+      var bytes = new TextEncoder().encode(JSON.stringify(projectData, null, 2));
+      var result = await window.draco.fs.saveFile({
+        defaultName: 'draco-project.draco',
+        filters: [{ name: 'Draco Project', extensions: ['draco'] }],
+        data: Array.from(bytes)
+      });
+      if(result && typeof showToast === 'function') showToast('◈ Project saved');
+    } catch(e){
+      console.error('[DRACO Bridge] Save failed:', e);
+      if(typeof showToast === 'function') showToast('⚠ Save failed: ' + e.message);
+    }
+  });
+
+  // ── Project Load ──────────────────────────────────
+  window.draco.on('project:load', async function(filePath){
+    try {
+      var json = await window.draco.fs.readProject(filePath);
+      var projectData = JSON.parse(json);
+      if(!projectData || !Array.isArray(projectData.images)){
+        throw new Error('Invalid project file format');
+      }
+      if(typeof images !== 'undefined') images.length = 0;
+      var loaded = 0;
+      for(var i = 0; i < projectData.images.length; i++){
+        var meta = projectData.images[i];
+        try {
+          var dataUrl = await window.draco.fs.readFileBase64(meta.filePath);
+          if(typeof images !== 'undefined'){
+            images.push({
+              id: meta.id || Math.random().toString(36).slice(2,10),
+              url: dataUrl,
+              name: meta.name,
+              size: meta.size,
+              filePath: meta.filePath,
+              cat: meta.cat || 'uncategorized',
+              detResult: meta.detResult || null,
+              selected: false
+            });
+            loaded++;
+          }
+        } catch(imgErr){
+          console.warn('[DRACO Bridge] Could not load image:', meta.filePath, imgErr);
+        }
+      }
+      if(loaded > 0 && typeof renderAll === 'function'){
+        document.getElementById('upz').style.display = 'none';
+        document.getElementById('app').style.display = 'grid';
+        document.getElementById('hdr-r').style.display = 'flex';
+        renderAll();
+      }
+      if(typeof showToast === 'function'){
+        showToast('◈ Loaded ' + loaded + '/' + projectData.images.length + ' images from project');
+      }
+    } catch(e){
+      console.error('[DRACO Bridge] Load failed:', e);
+      if(typeof showToast === 'function') showToast('⚠ Load failed: ' + e.message);
+    }
+  });
+
+  console.log('[DRACO] Bridge initialization complete');
+})();
+<\\/script>`;
+
+  // Strip remote CDN <script src> tags — the app has local browser fallbacks for all engines.
+  // Executing third-party scripts inside a privileged Electron renderer is a supply-chain risk.
+  html = html.replace(/<script\s[^>]*\bsrc=["']https?:\/\/[^"']+["'][^>]*><\/script>/gi, '');
+
+  // Inject bridge before closing body
+  html = html.replace('</body>', bridgeScript + '\n</body>');
+
+  // Update version badge
+  html = html.replace('>v4</span>', '>v5</span>');
+  html = html.replace('DRACO Dataset Studio v3', 'DRACO Dataset Studio v5');
+  html = html.replace('DRACO Dataset Studio v4', 'DRACO Dataset Studio v5');
+
+  // Update subtitle to show Electron features
+  html = html.replace(
+    'BlazeFace · InsightFace · DracoFlow v2 · Lanczos · Multi-AI · Ollama · pHash · Offline',
+    'BlazeFace · ArcFace 512-d · DracoFlow v2 · CLIP · Florence-2 · Lanczos · Multi-AI · Offline-First'
+  );
+
+  // Write into container using srcdoc-like approach
+  container.innerHTML = '';
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'width:100%;height:100%;border:none;';
+  iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups';
+  container.appendChild(iframe);
+
+  // Write the HTML into the iframe
+  const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+  iframeDoc.open();
+  iframeDoc.write(html);
+  iframeDoc.close();
+
+  // Pass a restricted bridge to the iframe — raw DB access and bulk secret reads are excluded.
+  // The iframe only receives the functional surface it actually needs.
+  if (IS_ELECTRON) {
+    iframe.contentWindow.draco = {
+      fs: window.draco.fs,
+      python: window.draco.python,
+      models: window.draco.models,
+      setup: window.draco.setup,
+      analysis: window.draco.analysis,
+      orchestrator: window.draco.orchestrator,
+      queue: window.draco.queue,
+      app: window.draco.app,
+      on: window.draco.on.bind(window.draco),
+      platform: window.draco.platform,
+      isElectron: true,
+      // db is intentionally omitted — settings UI should use db.getApiKeyStatus / db.setApiKey
+      // accessed via the outer renderer, not directly from the iframe
+    };
+  }
+}
+
+// ── Init ────────────────────────────────────────────────
+async function init() {
+  // Load the v4 app
+  await loadDracoApp();
+
+  // Check if setup is needed
+  if (IS_ELECTRON) {
+    const needsSetup = await checkIfSetupNeeded();
+    if (needsSetup) {
+      showSetup();
+    }
+  }
+}
+
+init();
+</script>
+</body>
+</html>
