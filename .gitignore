@@ -27,6 +27,8 @@ desktop.ini
 *.swp
 *.swo
 
-# Models (downloaded at runtime)
-assets/face-api-weights/*.json
-assets/face-api-weights/*.bin
+# Models / large binaries (downloaded at runtime)
+assets/face-api-weights/
+src/renderer/vendor/
+*.pdf
+package-lock.json
