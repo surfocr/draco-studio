@@ -1,0 +1,641 @@
+import React, { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  CheckCircle,
+  XCircle,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  TestTube,
+  Plus,
+  AlertTriangle,
+  Database,
+  Trash2,
+  Server,
+  Key,
+  Sliders,
+  FolderOpen,
+} from 'lucide-react'
+import { projectsApi, providersApi } from '@/hooks/useApi'
+import { useProjectStore } from '@/stores/useProjectStore'
+import { useToast } from '@/components/providers/ToastProvider'
+
+// ── useSetting hook ────────────────────────────────────────────────────────────
+
+function useSetting<T>(key: string, defaultValue: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stored = localStorage.getItem(`draco_setting_${key}`)
+      if (stored !== null) return JSON.parse(stored) as T
+    } catch {
+      // ignore
+    }
+    return defaultValue
+  })
+
+  function set(v: T) {
+    setValue(v)
+    try {
+      localStorage.setItem(`draco_setting_${key}`, JSON.stringify(v))
+    } catch {
+      // ignore
+    }
+  }
+
+  return [value, set]
+}
+
+// ── Shared styles ──────────────────────────────────────────────────────────────
+
+const inputCls =
+  'w-full bg-transparent border border-[var(--border)] rounded px-3 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]'
+
+const labelCls = 'block text-xs font-medium text-[var(--text-secondary)] mb-1 uppercase tracking-wide'
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+      {children}
+    </h2>
+  )
+}
+
+// ── Provider Status Dot ────────────────────────────────────────────────────────
+
+function StatusDot({ ok, latency }: { ok: boolean | undefined; latency?: number }) {
+  if (ok === undefined) return <span className="w-2 h-2 rounded-full bg-[var(--border)] inline-block" />
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={`w-2 h-2 rounded-full inline-block ${ok ? 'bg-green-400' : 'bg-red-400'}`} />
+      {ok ? (
+        <CheckCircle size={13} className="text-green-400" />
+      ) : (
+        <XCircle size={13} className="text-red-400" />
+      )}
+      {latency != null && (
+        <span className="text-xs text-[var(--text-secondary)]">{latency}ms</span>
+      )}
+    </span>
+  )
+}
+
+// ── Section 1: Provider Health ─────────────────────────────────────────────────
+
+function ProviderHealthSection() {
+  const {
+    data: health,
+    isLoading,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: ['provider-health'],
+    queryFn: () => providersApi.health(),
+    staleTime: 30_000,
+  })
+
+  return (
+    <section className="mb-8">
+      <div className="flex items-center justify-between mb-3">
+        <SectionTitle>
+          <Server size={15} />
+          Provider Status
+        </SectionTitle>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="btn btn-sm btn-secondary flex items-center gap-1"
+        >
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+          <RefreshCw size={14} className="animate-spin" /> Loading providers...
+        </div>
+      )}
+
+      {health && (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+          {Object.entries(health.providers).flatMap(([type, providerMap]) =>
+            Object.entries(providerMap).map(([name, status]) => (
+              <div
+                key={`${type}-${name}`}
+                className="flex items-center justify-between p-2 rounded border border-[var(--border)] bg-[var(--border)]/10"
+              >
+                <div>
+                  <p className="text-xs font-medium text-[var(--text-primary)] capitalize">{type}</p>
+                  <p className="text-xs text-[var(--text-secondary)]">{name}</p>
+                </div>
+                <StatusDot ok={status.ok} latency={status.latency_ms} />
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {health && Object.keys(health.providers).length === 0 && (
+        <p className="text-sm text-[var(--text-secondary)]">No providers configured.</p>
+      )}
+    </section>
+  )
+}
+
+// ── Section 2: Caption Providers ───────────────────────────────────────────────
+
+function CaptionProvidersSection() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['caption-models'],
+    queryFn: () => providersApi.captionModels(),
+    staleTime: 60_000,
+  })
+
+  const [testResults, setTestResults] = useState<
+    Record<string, { ok: boolean; latency_ms: number } | 'testing'>
+  >({})
+
+  async function testProvider(name: string) {
+    setTestResults(r => ({ ...r, [name]: 'testing' }))
+    try {
+      const result = await providersApi.testProvider('caption', name)
+      setTestResults(r => ({ ...r, [name]: result }))
+    } catch {
+      setTestResults(r => ({ ...r, [name]: { ok: false, latency_ms: 0 } }))
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <TestTube size={15} />
+        Caption Providers
+      </SectionTitle>
+
+      {isLoading && (
+        <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+          <RefreshCw size={14} className="animate-spin" /> Loading providers...
+        </div>
+      )}
+
+      {data && (
+        <div className="space-y-2">
+          {Object.entries(data.providers).map(([name, models]) => {
+            const testResult = testResults[name]
+            return (
+              <div key={name} className="p-3 rounded border border-[var(--border)]">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium text-[var(--text-primary)] capitalize">
+                    {name}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {testResult === 'testing' && (
+                      <RefreshCw size={12} className="animate-spin text-[var(--text-secondary)]" />
+                    )}
+                    {testResult && testResult !== 'testing' && (
+                      <StatusDot ok={testResult.ok} latency={testResult.latency_ms} />
+                    )}
+                    <button
+                      onClick={() => testProvider(name)}
+                      disabled={testResult === 'testing'}
+                      className="btn btn-sm btn-secondary"
+                    >
+                      Test
+                    </button>
+                  </div>
+                </div>
+                {Array.isArray(models) && models.length > 0 && (
+                  <p className="text-xs text-[var(--text-secondary)]">
+                    Models: {(models as unknown[]).map(m =>
+                      typeof m === 'string' ? m : (m as { name?: string })?.name ?? String(m)
+                    ).join(', ')}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ── Section 3: API Keys ────────────────────────────────────────────────────────
+
+interface ApiKeyRowProps {
+  label: string
+  storageKey: string
+  placeholder?: string
+}
+
+function ApiKeyRow({ label, storageKey, placeholder }: ApiKeyRowProps) {
+  const [value, setValue] = useSetting(storageKey, '')
+  const [draft, setDraft] = useState(value)
+  const [show, setShow] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  function handleSave() {
+    setValue(draft)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div>
+      <label className={labelCls}>{label}</label>
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <input
+            type={show ? 'text' : 'password'}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            placeholder={placeholder ?? `Enter ${label} API key`}
+            className={inputCls}
+          />
+          <button
+            onClick={() => setShow(p => !p)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            {show ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
+        <button
+          onClick={handleSave}
+          className={`btn btn-sm flex items-center gap-1 ${saved ? 'btn-secondary text-green-400' : 'btn-secondary'}`}
+        >
+          {saved ? <CheckCircle size={12} /> : null}
+          {saved ? 'Saved' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ApiKeysSection() {
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <Key size={15} />
+        API Keys
+      </SectionTitle>
+      <p className="text-xs text-[var(--text-secondary)] mb-3 flex items-center gap-1">
+        <AlertTriangle size={12} className="text-yellow-400" />
+        Keys stored locally and never sent to Draco servers
+      </p>
+      <div className="space-y-4">
+        <ApiKeyRow label="OpenAI" storageKey="openai_api_key" placeholder="sk-..." />
+        <ApiKeyRow label="Gemini" storageKey="gemini_api_key" placeholder="AIza..." />
+        <ApiKeyRow label="HuggingFace" storageKey="huggingface_api_key" placeholder="hf_..." />
+      </div>
+    </section>
+  )
+}
+
+// ── Section 4: Editing Providers ───────────────────────────────────────────────
+
+function EditingProvidersSection() {
+  const [comfyEndpoint, setComfyEndpoint] = useSetting(
+    'comfyui_endpoint',
+    'http://localhost:8188'
+  )
+  const [draft, setDraft] = useState(comfyEndpoint)
+  const [testResult, setTestResult] = useState<{ ok: boolean; latency_ms: number } | 'testing' | null>(null)
+
+  async function testConnection() {
+    setComfyEndpoint(draft)
+    setTestResult('testing')
+    try {
+      const r = await providersApi.testProvider('editing', 'comfyui')
+      setTestResult(r)
+    } catch {
+      setTestResult({ ok: false, latency_ms: 0 })
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <Sliders size={15} />
+        Editing Providers
+      </SectionTitle>
+      <div>
+        <label className={labelCls}>ComfyUI Endpoint</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            className={`${inputCls} flex-1`}
+          />
+          <button
+            onClick={testConnection}
+            disabled={testResult === 'testing'}
+            className="btn btn-sm btn-secondary flex items-center gap-1"
+          >
+            {testResult === 'testing'
+              ? <RefreshCw size={12} className="animate-spin" />
+              : <TestTube size={12} />}
+            Test
+          </button>
+        </div>
+        {testResult && testResult !== 'testing' && (
+          <p className={`text-xs mt-1 flex items-center gap-1 ${testResult.ok ? 'text-green-400' : 'text-red-400'}`}>
+            {testResult.ok
+              ? <><CheckCircle size={12} /> Available ({testResult.latency_ms}ms)</>
+              : <><XCircle size={12} /> Not available</>}
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ── Section 5: Performance ─────────────────────────────────────────────────────
+
+function PerformanceSection() {
+  const [maxWorkers, setMaxWorkers] = useSetting('max_workers', 4)
+  const [vramBudget, setVramBudget] = useSetting('vram_budget', '8GB')
+  const [thumbSize, setThumbSize] = useSetting('thumbnail_size', '256px')
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <Sliders size={15} />
+        Performance
+      </SectionTitle>
+      <div className="space-y-4">
+        <div>
+          <label className={labelCls}>Max Workers</label>
+          <input
+            type="number"
+            min={1}
+            max={16}
+            value={maxWorkers}
+            onChange={e => setMaxWorkers(Number(e.target.value))}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>VRAM Budget</label>
+          <select
+            value={vramBudget}
+            onChange={e => setVramBudget(e.target.value)}
+            className={inputCls}
+          >
+            {['4GB', '8GB', '12GB', '16GB', '24GB', 'Unlimited'].map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>Thumbnail Size</label>
+          <select
+            value={thumbSize}
+            onChange={e => setThumbSize(e.target.value)}
+            className={inputCls}
+          >
+            {['128px', '256px', '512px'].map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ── Section 6: Export Defaults ─────────────────────────────────────────────────
+
+function ExportDefaultsSection() {
+  const [triggerWord, setTriggerWord] = useSetting('default_trigger_word', '')
+  const [format, setFormat] = useSetting('default_export_format', 'LoRA')
+  const [repeats, setRepeats] = useSetting('default_repeats', 10)
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <FolderOpen size={15} />
+        Export Defaults
+      </SectionTitle>
+      <div className="space-y-4">
+        <div>
+          <label className={labelCls}>Default Trigger Word</label>
+          <input
+            type="text"
+            value={triggerWord}
+            onChange={e => setTriggerWord(e.target.value)}
+            placeholder="e.g. ohwx person"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>Default Format</label>
+          <select
+            value={format}
+            onChange={e => setFormat(e.target.value)}
+            className={inputCls}
+          >
+            {['LoRA', 'Kohya SS', 'ZIP'].map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>Default Repeats: {repeats}</label>
+          <input
+            type="range"
+            min={1}
+            max={30}
+            value={repeats}
+            onChange={e => setRepeats(Number(e.target.value))}
+            className="w-full accent-[var(--accent)]"
+          />
+          <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+            <span>1</span><span>30</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ── Section 7: Data Management ─────────────────────────────────────────────────
+
+function DataManagementSection() {
+  const { success, error: toastError } = useToast()
+  const [confirmVacuum, setConfirmVacuum] = useState(false)
+
+  async function handleClearThumbs() {
+    try {
+      await fetch('/api/admin/clear-thumbnails', { method: 'POST' })
+      success('Thumbnail cache cleared')
+    } catch {
+      toastError('Failed to clear thumbnails')
+    }
+  }
+
+  async function handleVacuum() {
+    if (!confirmVacuum) { setConfirmVacuum(true); return }
+    try {
+      await fetch('/api/admin/vacuum', { method: 'POST' })
+      success('Database vacuumed')
+      setConfirmVacuum(false)
+    } catch {
+      toastError('Vacuum failed')
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <Database size={15} />
+        Data Management
+      </SectionTitle>
+      <div className="space-y-3">
+        <div>
+          <p className="text-xs text-[var(--text-secondary)] mb-1 uppercase tracking-wide font-medium">
+            Storage Path
+          </p>
+          <p className="text-sm text-[var(--text-primary)] font-mono bg-[var(--border)]/20 px-3 py-1.5 rounded border border-[var(--border)]">
+            {localStorage.getItem('draco_setting_storage_path') ?? '~/.draco/data'}
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={handleClearThumbs}
+            className="btn btn-secondary btn-sm flex items-center gap-2 w-fit"
+          >
+            <Trash2 size={13} />
+            Clear Thumbnail Cache
+          </button>
+
+          <button
+            onClick={handleVacuum}
+            className={`btn btn-sm flex items-center gap-2 w-fit ${
+              confirmVacuum ? 'btn-danger' : 'btn-secondary'
+            }`}
+          >
+            <AlertTriangle size={13} />
+            {confirmVacuum ? 'Click again to confirm vacuum' : 'Vacuum Database'}
+          </button>
+          {confirmVacuum && (
+            <p className="text-xs text-yellow-400 flex items-center gap-1">
+              <AlertTriangle size={11} />
+              This will compact the database. May take a moment.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ── Section 8: Create Project ──────────────────────────────────────────────────
+
+function CreateProjectSection() {
+  const { success, error: toastError } = useToast()
+  const { addProject, setActiveProject } = useProjectStore()
+  const queryClient = useQueryClient()
+
+  const [name, setName] = useState('')
+  const [triggerWord, setTriggerWord] = useState('')
+  const [nameError, setNameError] = useState('')
+
+  const createMutation = useMutation({
+    mutationFn: () => {
+      if (!name.trim()) throw new Error('Name is required')
+      return projectsApi.create({
+        name: name.trim(),
+        trigger_word: triggerWord.trim() || undefined,
+      })
+    },
+    onSuccess: project => {
+      addProject(project)
+      setActiveProject(project.id)
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      success(`Project "${project.name}" created`)
+      setName('')
+      setTriggerWord('')
+      setNameError('')
+    },
+    onError: (e: Error) => {
+      setNameError(e.message)
+      toastError(e.message || 'Failed to create project')
+    },
+  })
+
+  function handleCreate() {
+    setNameError('')
+    if (!name.trim()) { setNameError('Name is required'); return }
+    createMutation.mutate()
+  }
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <Plus size={15} />
+        Create New Project
+      </SectionTitle>
+      <div className="space-y-3 max-w-sm">
+        <div>
+          <label className={labelCls}>Project Name *</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCreate() }}
+            placeholder="My Dataset"
+            className={inputCls}
+          />
+          {nameError && <p className="text-xs text-red-400 mt-1">{nameError}</p>}
+        </div>
+        <div>
+          <label className={labelCls}>Trigger Word</label>
+          <input
+            type="text"
+            value={triggerWord}
+            onChange={e => setTriggerWord(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCreate() }}
+            placeholder="e.g. ohwx person"
+            className={inputCls}
+          />
+        </div>
+        <button
+          onClick={handleCreate}
+          disabled={createMutation.isPending}
+          className="btn btn-primary flex items-center gap-2"
+        >
+          {createMutation.isPending
+            ? <RefreshCw size={14} className="animate-spin" />
+            : <Plus size={14} />}
+          Create Project
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// ── Main Component ─────────────────────────────────────────────────────────────
+
+export default function Settings() {
+  return (
+    <div className="p-6 overflow-y-auto h-full max-w-3xl">
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-[var(--text-primary)]">Settings</h1>
+        <p className="text-sm text-[var(--text-secondary)]">
+          Configure providers, performance, and project defaults
+        </p>
+      </div>
+
+      <ProviderHealthSection />
+      <CaptionProvidersSection />
+      <ApiKeysSection />
+      <EditingProvidersSection />
+      <PerformanceSection />
+      <ExportDefaultsSection />
+      <DataManagementSection />
+      <CreateProjectSection />
+    </div>
+  )
+}
