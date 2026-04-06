@@ -46,6 +46,8 @@ class KohyaExportRequest(BaseModel):
     network_rank: int = 32
     network_alpha: int = 16
     caption_style: str = "active"
+    include_only_captioned: bool = True
+    include_only_approved: bool = False
     generate_train_script: bool = True
     create_zip: bool = True
 
@@ -270,6 +272,7 @@ async def export_kohya(
         project_id,
         db,
         include_only_captioned=body.include_only_captioned,
+        include_only_approved=body.include_only_approved,
     )
     if not assets:
         raise HTTPException(status_code=422, detail="No eligible assets to export")
@@ -288,6 +291,7 @@ async def export_kohya(
         "network_alpha": body.network_alpha,
         "caption_style": body.caption_style,
         "include_only_captioned": body.include_only_captioned,
+        "include_only_approved": body.include_only_approved,
         "generate_train_script": body.generate_train_script,
         "create_zip": body.create_zip,
     }

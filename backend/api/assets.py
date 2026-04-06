@@ -293,7 +293,7 @@ async def search_assets(
 @router.get("/assets/search")
 async def search_assets_flat(
     db: Annotated[AsyncSession, Depends(get_db)],
-    project_id: int = Query(...),
+    project_id: str = Query(...),
     min_score: Optional[float] = Query(None),
     max_score: Optional[float] = Query(None),
     shot_type: Optional[str] = Query(None),
@@ -462,6 +462,33 @@ async def update_asset(
 
     await db.flush()
     return AssetSummary.model_validate(asset)
+
+
+@router.post("/assets/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_assets(
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Delete multiple assets by ID list."""
+    ids = body.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="ids required")
+
+    from providers.registry import get_registry
+    registry = get_registry()
+    storage = registry.get("storage", "local")
+
+    deleted = 0
+    for asset_id in ids:
+        asset = await db.get(Asset, asset_id)
+        if asset:
+            if storage:
+                await storage.delete_asset(asset.filepath, asset_id)
+            await db.delete(asset)
+            deleted += 1
+
+    await db.commit()
+    return {"deleted": deleted}
 
 
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)

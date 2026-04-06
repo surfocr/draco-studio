@@ -367,23 +367,15 @@ async def bulk_prepend(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Prepend text to captions for multiple assets."""
-    from sqlalchemy import select
-    from models.asset import Asset
-
     asset_ids = body.get("asset_ids", [])
     prefix = body.get("prefix", "")
     if not prefix or not asset_ids:
         raise HTTPException(status_code=400, detail="prefix and asset_ids required")
 
-    result = await db.execute(select(Asset).where(Asset.id.in_(asset_ids)))
-    assets = result.scalars().all()
-    for asset in assets:
-        if asset.caption_text:
-            asset.caption_text = prefix + " " + asset.caption_text
-        else:
-            asset.caption_text = prefix
+    svc = get_caption_service()
+    updated = await svc.bulk_prepend(asset_ids, prefix, db)
     await db.commit()
-    return {"updated": len(assets)}
+    return {"updated": updated}
 
 
 @router.post("/captions/bulk_append")
@@ -392,23 +384,15 @@ async def bulk_append(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Append text to captions for multiple assets."""
-    from sqlalchemy import select
-    from models.asset import Asset
-
     asset_ids = body.get("asset_ids", [])
     suffix = body.get("suffix", "")
     if not suffix or not asset_ids:
         raise HTTPException(status_code=400, detail="suffix and asset_ids required")
 
-    result = await db.execute(select(Asset).where(Asset.id.in_(asset_ids)))
-    assets = result.scalars().all()
-    for asset in assets:
-        if asset.caption_text:
-            asset.caption_text = asset.caption_text.rstrip() + ", " + suffix
-        else:
-            asset.caption_text = suffix
+    svc = get_caption_service()
+    updated = await svc.bulk_append(asset_ids, suffix, db)
     await db.commit()
-    return {"updated": len(assets)}
+    return {"updated": updated}
 
 
 @router.post("/captions/bulk_replace")
@@ -422,68 +406,43 @@ async def bulk_replace(
 
     asset_ids = body.get("asset_ids", [])
     find = body.get("find", "")
-    replace = body.get("replace", "")
+    replace_text = body.get("replace", "")
     project_id = body.get("project_id")
 
     if find is None:
         raise HTTPException(status_code=400, detail="find is required")
 
-    if asset_ids:
-        query = select(Asset).where(Asset.id.in_(asset_ids))
-    elif project_id:
-        query = select(Asset).where(Asset.project_id == project_id)
-    else:
-        raise HTTPException(status_code=400, detail="asset_ids or project_id required")
+    if not asset_ids:
+        if project_id:
+            result = await db.execute(select(Asset.id).where(Asset.project_id == project_id))
+            asset_ids = [row[0] for row in result.all()]
+        else:
+            raise HTTPException(status_code=400, detail="asset_ids or project_id required")
 
-    result = await db.execute(query)
-    assets = result.scalars().all()
-    updated = 0
-    for asset in assets:
-        if asset.caption_text and find in asset.caption_text:
-            asset.caption_text = asset.caption_text.replace(find, replace)
-            updated += 1
+    svc = get_caption_service()
+    updated = await svc.bulk_find_replace(asset_ids, find, replace_text, db)
     await db.commit()
     return {"updated": updated}
 
 
 @router.get("/captions/consistency_check")
 async def caption_consistency_check(
-    project_id: int,
+    project_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Analyze caption consistency across the dataset."""
-    from sqlalchemy import select
-    from models.asset import Asset
-    from collections import Counter
-    import re
-
-    result = await db.execute(select(Asset).where(Asset.project_id == project_id))
-    assets = result.scalars().all()
-
-    total = len(assets)
-    captioned = [a for a in assets if a.caption_text]
-    uncaptioned_count = total - len(captioned)
-
-    all_words: list[str] = []
-    caption_lengths: list[int] = []
-
-    for a in captioned:
-        words = re.findall(r'\b\w+\b', a.caption_text.lower())
-        all_words.extend(words)
-        caption_lengths.append(len(a.caption_text))
-
-    word_freq = Counter(all_words).most_common(20)
-    avg_length = sum(caption_lengths) / len(caption_lengths) if caption_lengths else 0
-
+    svc = get_caption_service()
+    report = await svc.analyze_consistency(project_id, db)
+    total = report.total_captioned + report.total_uncaptioned
     return {
         "total": total,
-        "captioned": len(captioned),
-        "uncaptioned": uncaptioned_count,
-        "coverage_pct": round(len(captioned) / total * 100, 1) if total > 0 else 0,
-        "avg_caption_length": round(avg_length),
-        "top_words": [{"word": w, "count": c} for w, c in word_freq],
-        "short_captions": len([a for a in captioned if len(a.caption_text) < 20]),
-        "very_long_captions": len([a for a in captioned if len(a.caption_text) > 500]),
+        "captioned": report.total_captioned,
+        "uncaptioned": report.total_uncaptioned,
+        "coverage_pct": round(report.total_captioned / total * 100, 1) if total > 0 else 0,
+        "avg_caption_length": round(report.avg_length),
+        "top_words": [{"word": w, "count": c} for w, c in report.common_words],
+        "inconsistent_formatting": len(report.inconsistent_formatting),
+        "recommendations": report.recommendations,
     }
 
 
