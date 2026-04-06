@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # ── Storage ───────────────────────────────────────────────────────────────
     STORAGE_PATH: str = "./data/storage"
+    DATA_DIR: str = "./data"
     QDRANT_PATH: str = "./data/qdrant"
     QDRANT_COLLECTION: str = "draco_embeddings"
     QDRANT_FACE_COLLECTION: str = "draco_face_embeddings"
@@ -87,6 +88,10 @@ class Settings(BaseSettings):
     @property
     def storage_path(self) -> Path:
         return Path(self.STORAGE_PATH).resolve()
+
+    @property
+    def data_dir(self) -> Path:
+        return Path(self.DATA_DIR).resolve()
 
     @property
     def qdrant_path(self) -> Path:

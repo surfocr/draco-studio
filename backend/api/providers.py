@@ -20,15 +20,14 @@ router = APIRouter(prefix="/api/providers", tags=["providers"])
 
 def _get_fernet() -> Fernet:
     """Return a Fernet instance keyed from DRACO_SECRET_KEY env var.
-    Falls back to a stable machine-derived key so the app works without explicit config."""
+    Raises RuntimeError if the variable is not set — never falls back to a derived key."""
     raw = os.environ.get("DRACO_SECRET_KEY")
-    if raw:
-        key = base64.urlsafe_b64encode(raw.encode()[:32].ljust(32, b"\x00"))
-    else:
-        # Derive a stable key from the machine's hostname — not ideal but better than plaintext
-        import hashlib, socket
-        seed = socket.gethostname().encode() + b"draco-v6"
-        key = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
+    if not raw:
+        raise RuntimeError(
+            "DRACO_SECRET_KEY environment variable is not set. "
+            "Set it to a non-empty secret string to enable provider API key storage."
+        )
+    key = base64.urlsafe_b64encode(raw.encode()[:32].ljust(32, b"\x00"))
     return Fernet(key)
 
 

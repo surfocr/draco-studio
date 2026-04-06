@@ -136,6 +136,7 @@ async def _create_and_queue_export(
     assets_data = _build_assets_data(assets, captions)
 
     async def _run_export() -> None:
+        from database import AsyncSessionLocal
         from providers.registry import get_registry
 
         registry = get_registry()
@@ -161,25 +162,30 @@ async def _create_and_queue_export(
                 from providers.export.zip_exporter import ZipExporter
                 exporter = ZipExporter()
 
-        if not exporter:
-            export_job.status = "failed"
-            export_job.error_message = f"No exporter found for format: {export_format}"
-            await db.commit()
-            return
+        async with AsyncSessionLocal() as worker_db:
+            job = await worker_db.get(ExportJob, export_job_id)
+            if job is None:
+                return
 
-        try:
-            manifest = await exporter.export(
-                [a.id for a in assets], output_dir, opts_with_data
-            )
-            export_job.status = "done"
-            export_job.exported_assets = manifest.asset_count
-            export_job.finished_at = datetime.now(timezone.utc)
-            export_job.output_path = manifest.output_path
-        except Exception as e:
-            export_job.status = "failed"
-            export_job.error_message = str(e)
-        finally:
-            await db.commit()
+            if not exporter:
+                job.status = "failed"
+                job.error_message = f"No exporter found for format: {export_format}"
+                await worker_db.commit()
+                return
+
+            try:
+                manifest = await exporter.export(
+                    [a["id"] for a in assets_data], output_dir, opts_with_data
+                )
+                job.status = "done"
+                job.exported_assets = manifest.asset_count
+                job.finished_at = datetime.now(timezone.utc)
+                job.output_path = manifest.output_path
+            except Exception as e:
+                job.status = "failed"
+                job.error_message = str(e)
+            finally:
+                await worker_db.commit()
 
     from workers.job_queue import get_job_queue
 

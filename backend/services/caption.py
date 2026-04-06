@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.asset import Asset
 from models.caption import CaptionVersion
 from providers.registry import get_registry
@@ -341,7 +342,13 @@ class CaptionService:
             return None
         src_path = Path(asset.filepath)
         if output_dir:
-            dest = Path(output_dir) / src_path.with_suffix(".txt").name
+            dest_dir = Path(output_dir).resolve()
+            storage_root = settings.storage_path
+            if not dest_dir.is_relative_to(storage_root):
+                raise ValueError(
+                    f"output_dir must be within storage root ({storage_root})"
+                )
+            dest = dest_dir / src_path.with_suffix(".txt").name
         else:
             dest = src_path.with_suffix(".txt")
         dest.parent.mkdir(parents=True, exist_ok=True)

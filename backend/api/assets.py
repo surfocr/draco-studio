@@ -27,6 +27,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models.asset import Asset, ReviewState, ShotType
 from services.ingest import ingest_directory, ingest_files
@@ -390,8 +391,15 @@ async def ingest_dir(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Ingest all images from a local directory path."""
-    if not Path(body.directory_path).is_dir():
+    requested = Path(body.directory_path).resolve()
+    if not requested.is_dir():
         raise HTTPException(status_code=400, detail="Directory not found")
+    ingest_root = settings.data_dir
+    if not requested.is_relative_to(ingest_root):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Directory must be within the data directory ({ingest_root})",
+        )
 
     from workers.job_queue import get_job_queue
 
