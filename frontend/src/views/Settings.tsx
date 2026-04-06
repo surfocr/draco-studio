@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle,
   XCircle,
@@ -224,32 +224,54 @@ function CaptionProvidersSection() {
 
 interface ApiKeyRowProps {
   label: string
-  storageKey: string
+  providerType: string
+  providerName: string
   placeholder?: string
+  hasKey?: boolean
 }
 
-function ApiKeyRow({ label, storageKey, placeholder }: ApiKeyRowProps) {
-  const [value, setValue] = useSetting(storageKey, '')
-  const [draft, setDraft] = useState(value)
+function ApiKeyRow({ label, providerType, providerName, placeholder, hasKey }: ApiKeyRowProps) {
+  const [draft, setDraft] = useState('')
   const [show, setShow] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
 
-  function handleSave() {
-    setValue(draft)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  async function handleSave() {
+    if (!draft.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await providersApi.saveApiKey(providerType, providerName, draft)
+      setDraft('')
+      setSaved(true)
+      queryClient.invalidateQueries({ queryKey: ['api-key-status'] })
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      setError('Failed to save key')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <div>
-      <label className={labelCls}>{label}</label>
+      <label className={labelCls}>
+        {label}
+        {hasKey && (
+          <span className="ml-2 text-green-400 font-normal normal-case tracking-normal">
+            ✓ key stored
+          </span>
+        )}
+      </label>
       <div className="flex gap-2">
         <div className="relative flex-1">
           <input
             type={show ? 'text' : 'password'}
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            placeholder={placeholder ?? `Enter ${label} API key`}
+            placeholder={hasKey ? '••••••••••••••••' : (placeholder ?? `Enter ${label} API key`)}
             className={inputCls}
           />
           <button
@@ -261,31 +283,40 @@ function ApiKeyRow({ label, storageKey, placeholder }: ApiKeyRowProps) {
         </div>
         <button
           onClick={handleSave}
+          disabled={saving || !draft.trim()}
           className={`btn btn-sm flex items-center gap-1 ${saved ? 'btn-secondary text-green-400' : 'btn-secondary'}`}
         >
           {saved ? <CheckCircle size={12} /> : null}
-          {saved ? 'Saved' : 'Save'}
+          {saving ? 'Saving…' : saved ? 'Saved' : 'Save'}
         </button>
       </div>
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
     </div>
   )
 }
 
 function ApiKeysSection() {
+  const { data: keyStatus } = useQuery({
+    queryKey: ['api-key-status'],
+    queryFn: () => providersApi.getApiKeyStatus(),
+    staleTime: 30_000,
+  })
+
+  const status = keyStatus?.status ?? {}
+
   return (
     <section className="mb-8">
       <SectionTitle>
         <Key size={15} />
         API Keys
       </SectionTitle>
-      <p className="text-xs text-[var(--text-secondary)] mb-3 flex items-center gap-1">
-        <AlertTriangle size={12} className="text-yellow-400" />
-        Keys stored locally and never sent to Draco servers
+      <p className="text-xs text-[var(--text-secondary)] mb-3">
+        Keys are encrypted and stored in the local backend database. They are never sent to Draco servers.
       </p>
       <div className="space-y-4">
-        <ApiKeyRow label="OpenAI" storageKey="openai_api_key" placeholder="sk-..." />
-        <ApiKeyRow label="Gemini" storageKey="gemini_api_key" placeholder="AIza..." />
-        <ApiKeyRow label="HuggingFace" storageKey="huggingface_api_key" placeholder="hf_..." />
+        <ApiKeyRow label="OpenAI" providerType="caption" providerName="openai" placeholder="sk-..." hasKey={status['openai']} />
+        <ApiKeyRow label="Gemini" providerType="caption" providerName="gemini" placeholder="AIza..." hasKey={status['gemini']} />
+        <ApiKeyRow label="HuggingFace" providerType="caption" providerName="huggingface" placeholder="hf_..." hasKey={status['huggingface']} />
       </div>
     </section>
   )

@@ -233,6 +233,20 @@ export const providersApi = {
     api
       .get<{ providers: Record<string, unknown[]> }>('/api/providers/caption/models')
       .then((r) => r.data),
+
+  saveApiKey: (providerType: string, providerName: string, apiKey: string) =>
+    api
+      .post<{ status: string; provider_name: string }>('/api/providers/api-key', {
+        provider_type: providerType,
+        provider_name: providerName,
+        api_key: apiKey,
+      })
+      .then((r) => r.data),
+
+  getApiKeyStatus: () =>
+    api
+      .get<{ status: Record<string, boolean> }>('/api/providers/api-key-status')
+      .then((r) => r.data),
 }
 
 // ── Coach (enhanced) ──────────────────────────────────────────────────────────

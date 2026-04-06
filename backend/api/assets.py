@@ -359,15 +359,21 @@ async def ingest_upload(
         tmp_path.write_bytes(content)
         file_paths.append(str(tmp_path))
 
-    # Submit async ingest job
+    # Submit async ingest job — open a fresh session inside the worker so it is
+    # not tied to the request-scoped session that FastAPI closes on 202 return.
     queue = get_job_queue()
+    _project_id = project_id
+    _queue_analysis = queue_analysis
 
     async def _run_ingest() -> dict:
-        results = {"created": [], "errors": [], "duplicates": 0}
-        async for progress in ingest_files(file_paths, project_id, db, queue_analysis):
-            results["created"] = progress.assets_created
-            results["errors"] = progress.errors
-            results["duplicates"] = progress.duplicates_found
+        from database import AsyncSessionLocal
+        results: dict = {"created": [], "errors": [], "duplicates": 0}
+        async with AsyncSessionLocal() as worker_db:
+            async for progress in ingest_files(file_paths, _project_id, worker_db, _queue_analysis):
+                results["created"] = progress.assets_created
+                results["errors"] = progress.errors
+                results["duplicates"] = progress.duplicates_found
+            await worker_db.commit()
         return results
 
     job_id = await queue.submit(_run_ingest)
@@ -391,14 +397,21 @@ async def ingest_dir(
 
     queue = get_job_queue()
 
+    _dir_project_id = project_id
+    _dir_body = body
+
     async def _run() -> dict:
-        results = {"created": [], "errors": [], "duplicates": 0}
-        async for progress in ingest_directory(
-            body.directory_path, project_id, db, body.recursive, body.queue_analysis
-        ):
-            results["created"] = progress.assets_created
-            results["errors"] = progress.errors
-            results["duplicates"] = progress.duplicates_found
+        from database import AsyncSessionLocal
+        results: dict = {"created": [], "errors": [], "duplicates": 0}
+        async with AsyncSessionLocal() as worker_db:
+            async for progress in ingest_directory(
+                _dir_body.directory_path, _dir_project_id, worker_db,
+                _dir_body.recursive, _dir_body.queue_analysis,
+            ):
+                results["created"] = progress.assets_created
+                results["errors"] = progress.errors
+                results["duplicates"] = progress.duplicates_found
+            await worker_db.commit()
         return results
 
     job_id = await queue.submit(_run)

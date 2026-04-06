@@ -1,20 +1,45 @@
 """Provider configuration and health check router."""
 from __future__ import annotations
 
+import base64
+import os
 from typing import Annotated
 
+from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from models.provider_config import ProviderConfig
 from providers.registry import get_registry
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
 
+def _get_fernet() -> Fernet:
+    """Return a Fernet instance keyed from DRACO_SECRET_KEY env var.
+    Falls back to a stable machine-derived key so the app works without explicit config."""
+    raw = os.environ.get("DRACO_SECRET_KEY")
+    if raw:
+        key = base64.urlsafe_b64encode(raw.encode()[:32].ljust(32, b"\x00"))
+    else:
+        # Derive a stable key from the machine's hostname — not ideal but better than plaintext
+        import hashlib, socket
+        seed = socket.gethostname().encode() + b"draco-v6"
+        key = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
+    return Fernet(key)
+
+
 class ProviderConfigRequest(BaseModel):
     config: dict
+
+
+class ApiKeyRequest(BaseModel):
+    provider_type: str
+    provider_name: str
+    api_key: str
 
 
 @router.get("/health")
@@ -57,10 +82,72 @@ async def list_providers_by_type(provider_type: str) -> dict:
 async def save_provider_config(
     provider_type: str,
     body: ProviderConfigRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    """Save configuration for a provider type."""
-    # Config saved to settings — implementation depends on config system
-    return {"status": "saved", "provider_type": provider_type}
+    """Save non-secret configuration for a provider type."""
+    provider_name = body.config.get("provider_name", "default")
+    result = await db.execute(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_type == provider_type,
+            ProviderConfig.provider_name == provider_name,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        row.config = {k: v for k, v in body.config.items() if k != "provider_name"}
+    else:
+        row = ProviderConfig(
+            provider_type=provider_type,
+            provider_name=provider_name,
+            config={k: v for k, v in body.config.items() if k != "provider_name"},
+        )
+        db.add(row)
+    await db.commit()
+    return {"status": "saved", "provider_type": provider_type, "provider_name": provider_name}
+
+
+@router.post("/api-key")
+async def save_api_key(
+    body: ApiKeyRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Store an API key encrypted in the database. Never returns the key."""
+    fernet = _get_fernet()
+    encrypted = fernet.encrypt(body.api_key.encode()).decode()
+
+    result = await db.execute(
+        select(ProviderConfig).where(
+            ProviderConfig.provider_type == body.provider_type,
+            ProviderConfig.provider_name == body.provider_name,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        row.api_key_encrypted = encrypted
+    else:
+        row = ProviderConfig(
+            provider_type=body.provider_type,
+            provider_name=body.provider_name,
+            api_key_encrypted=encrypted,
+        )
+        db.add(row)
+    await db.commit()
+    return {"status": "saved", "provider_name": body.provider_name}
+
+
+@router.get("/api-key-status")
+async def get_api_key_status(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Return which providers have a key stored (boolean map — never the keys themselves)."""
+    result = await db.execute(
+        select(ProviderConfig.provider_name, ProviderConfig.api_key_encrypted)
+    )
+    status = {
+        row.provider_name: row.api_key_encrypted is not None
+        for row in result
+    }
+    return {"status": status}
 
 
 @router.post("/{provider_type}/{provider_name}/test")

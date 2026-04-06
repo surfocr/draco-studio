@@ -73,3 +73,35 @@ async def queue_duplicate_scan(project_id: str) -> str:
             return {"clusters_found": len(clusters)}
 
     return await queue.submit(_run, job_type="duplicate_scan")
+
+
+async def queue_export_sidecars_task(
+    project_id: str,
+    asset_ids: list[str],
+    output_dir: str | None,
+    job_id: str,
+) -> str:
+    """Queue sidecar .txt file export for a set of assets. Returns job_id."""
+    from database import AsyncSessionLocal
+    from services.caption import CaptionService
+    from workers.job_queue import get_job_queue
+
+    queue = get_job_queue()
+    service = CaptionService()
+
+    async def _run() -> dict:
+        written = 0
+        errors: list[str] = []
+        async with AsyncSessionLocal() as db:
+            for asset_id in asset_ids:
+                try:
+                    path = await service.write_sidecar_direct(asset_id, db, output_dir)
+                    if path:
+                        written += 1
+                    else:
+                        errors.append(f"{asset_id}: no active caption")
+                except Exception as exc:
+                    errors.append(f"{asset_id}: {exc}")
+        return {"written": written, "errors": errors, "job_id": job_id}
+
+    return await queue.submit(_run, job_type="export_sidecars")
