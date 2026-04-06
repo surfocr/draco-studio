@@ -114,7 +114,13 @@ async def save_api_key(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Store an API key encrypted in the database. Never returns the key."""
-    fernet = _get_fernet()
+    try:
+        fernet = _get_fernet()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
     encrypted = fernet.encrypt(body.api_key.encode()).decode()
 
     result = await db.execute(

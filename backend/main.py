@@ -226,14 +226,13 @@ def create_app() -> FastAPI:
         }
 
     # ── Static files (thumbnails, originals via direct URL) ───────────────────
-    import os
     storage_path = settings.storage_path
-    if storage_path.exists():
-        app.mount(
-            "/files",
-            StaticFiles(directory=str(storage_path)),
-            name="files",
-        )
+    storage_path.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/files",
+        StaticFiles(directory=str(storage_path)),
+        name="files",
+    )
 
     return app
 

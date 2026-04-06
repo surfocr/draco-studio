@@ -80,15 +80,27 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 # ── Startup helper ────────────────────────────────────────────────────────────
 
 async def init_db() -> None:
-    """Create all tables (no-op if already exist). Used in development/test.
-    Production uses Alembic migrations."""
-    # Import all models so metadata is populated
-    import models  # noqa: F401
+    """Bootstrap the database.
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    In DEBUG mode (local dev / tests): runs create_all so the schema is
+    available without Alembic.  In production (DEBUG=False): only imports
+    models so they register with metadata, then verifies the DB is reachable.
+    Production schema management is handled exclusively by Alembic migrations.
+    """
+    import models  # noqa: F401 — populate Base.metadata
 
-    logger.info("Database initialised at %s", settings.DATABASE_URL)
+    if settings.DEBUG:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database bootstrapped (create_all) at %s", settings.DATABASE_URL)
+    else:
+        # Verify connectivity; rely on Alembic for schema
+        ok = await check_db()
+        if not ok:
+            raise RuntimeError(
+                f"Database at {settings.DATABASE_URL!r} is not reachable on startup"
+            )
+        logger.info("Database ready at %s", settings.DATABASE_URL)
 
 
 async def check_db() -> bool:

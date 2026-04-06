@@ -205,17 +205,34 @@ async def delete_caption(
     await db.commit()
 
 
+async def _validate_asset_ownership(project_id: str, asset_ids: list[str], db) -> list[str]:
+    """Return only the asset IDs that belong to project_id; raise 422 if none match."""
+    from sqlalchemy import select as _select
+    from models.asset import Asset as _Asset
+    result = await db.execute(
+        _select(_Asset.id).where(
+            _Asset.id.in_(asset_ids),
+            _Asset.project_id == project_id,
+        )
+    )
+    owned = [row[0] for row in result.all()]
+    if not owned:
+        raise HTTPException(status_code=422, detail="No requested assets belong to this project")
+    return owned
+
+
 @router.post("/projects/{project_id}/captions/bulk", status_code=status.HTTP_202_ACCEPTED)
 async def bulk_caption_generate(
     project_id: str,
     body: BulkCaptionRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    owned_ids = await _validate_asset_ownership(project_id, body.asset_ids, db)
     svc = get_caption_service()
     job_id = await svc.generate_batch(
-        body.asset_ids, body.provider, body.style, db, body.options
+        owned_ids, body.provider, body.style, db, body.options
     )
-    return {"job_id": job_id, "asset_count": len(body.asset_ids)}
+    return {"job_id": job_id, "asset_count": len(owned_ids)}
 
 
 @router.post("/projects/{project_id}/captions/bulk-edit")
@@ -224,25 +241,26 @@ async def bulk_edit_captions(
     body: BulkOperationRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    owned_ids = await _validate_asset_ownership(project_id, body.asset_ids, db)
     svc = get_caption_service()
     op = body.operation
 
     if op == "prepend":
         if not body.text:
             raise HTTPException(status_code=422, detail="'text' required for prepend")
-        count = await svc.bulk_prepend(body.asset_ids, body.text, db)
+        count = await svc.bulk_prepend(owned_ids, body.text, db)
     elif op == "append":
         if not body.text:
             raise HTTPException(status_code=422, detail="'text' required for append")
-        count = await svc.bulk_append(body.asset_ids, body.text, db)
+        count = await svc.bulk_append(owned_ids, body.text, db)
     elif op == "find_replace":
         if body.find is None or body.replace is None:
             raise HTTPException(status_code=422, detail="'find' and 'replace' required")
         count = await svc.bulk_find_replace(
-            body.asset_ids, body.find, body.replace, db, body.use_regex
+            owned_ids, body.find, body.replace, db, body.use_regex
         )
     elif op == "normalize":
-        count = await svc.normalize(body.asset_ids, db)
+        count = await svc.normalize(owned_ids, db)
     else:
         raise HTTPException(status_code=422, detail=f"Unknown operation '{op}'")
 
@@ -285,7 +303,7 @@ async def export_sidecars_post(
     from models.asset import Asset
 
     if body.asset_ids:
-        asset_ids = body.asset_ids
+        asset_ids = await _validate_asset_ownership(project_id, body.asset_ids, db)
     else:
         result = await db.execute(
             select(Asset.id).where(
