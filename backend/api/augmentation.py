@@ -26,6 +26,7 @@ class AutoFitRequest(BaseModel):
     target_width: int
     target_height: int
     provider: str = "auto"
+    prompt: str | None = None
 
 
 class ExecutePlanRequest(BaseModel):
@@ -103,6 +104,7 @@ async def auto_fit_assets(
         body.target_width,
         body.target_height,
         provider_name=body.provider,
+        prompt=body.prompt,
     )
     return {"job_id": job_id, "asset_count": len(body.asset_ids)}
 

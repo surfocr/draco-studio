@@ -316,12 +316,14 @@ export const augmentationApi = {
     projectId: string,
     assetIds: string[],
     targetWidth: number,
-    targetHeight: number
+    targetHeight: number,
+    provider = 'auto',
+    prompt?: string
   ) =>
     api
       .post<{ job_id: string; asset_count: number }>(
         `/api/projects/${projectId}/augmentation/auto-fit`,
-        { asset_ids: assetIds, target_width: targetWidth, target_height: targetHeight }
+        { asset_ids: assetIds, target_width: targetWidth, target_height: targetHeight, provider, prompt }
       )
       .then((r) => r.data),
 

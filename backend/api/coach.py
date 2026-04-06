@@ -15,8 +15,8 @@ from services.coach import DatasetCoach
 
 router = APIRouter(prefix="/api/projects", tags=["coach"])
 
-# Simple in-memory cache: { project_id: (timestamp, CoachReport) }
-_report_cache: dict[str, tuple[float, object]] = {}
+# Simple in-memory cache: { (project_id, trigger_words_tuple): (timestamp, CoachReport) }
+_report_cache: dict[tuple, tuple[float, object]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
@@ -48,8 +48,10 @@ async def analyze_project(
     coach = DatasetCoach()
     report = await coach.analyze(project_id, db, trigger_words=tw_list)
 
-    # Cache the result
-    _report_cache[project_id] = (time.monotonic(), report)
+    # Cache keyed by (project_id, normalised trigger words) so different
+    # trigger-word sets don't collide.
+    cache_key = (project_id, tuple(sorted(tw_list or [])))
+    _report_cache[cache_key] = (time.monotonic(), report)
 
     return dataclasses.asdict(report)
 
@@ -61,7 +63,9 @@ async def get_cached_report(
     trigger_words: str | None = Query(default=None, description="Comma-separated trigger words"),
 ) -> dict:
     """Alias for analyze — returns cached report if fresh (< 5 min old)."""
-    cached = _report_cache.get(project_id)
+    tw_list = [w.strip() for w in trigger_words.split(",") if w.strip()] if trigger_words else []
+    cache_key = (project_id, tuple(sorted(tw_list)))
+    cached = _report_cache.get(cache_key)
     if cached is not None:
         ts, report = cached
         if time.monotonic() - ts < _CACHE_TTL_SECONDS:

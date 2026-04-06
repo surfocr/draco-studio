@@ -209,11 +209,13 @@ class AugmentationService:
         target_width: int,
         target_height: int,
         provider_name: str = "auto",
+        prompt: str | None = None,
     ) -> str:
         _asset_ids = list(asset_ids)
         _target_w = target_width
         _target_h = target_height
         _provider = provider_name
+        _prompt = prompt
 
         async def _run() -> None:
             from database import AsyncSessionLocal
@@ -221,7 +223,7 @@ class AugmentationService:
                 for asset_id in _asset_ids:
                     try:
                         await self.outpaint_to_ratio(
-                            asset_id, _target_w, _target_h, worker_db, _provider
+                            asset_id, _target_w, _target_h, worker_db, _provider, _prompt
                         )
                     except Exception as e:
                         logger.error("auto_fit failed for %s: %s", asset_id, e)
