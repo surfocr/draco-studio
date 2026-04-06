@@ -70,7 +70,7 @@ async def outpaint_asset(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     try:
-        result = await _service.outpaint_to_ratio(
+        job = await _service.outpaint_to_ratio(
             asset_id,
             body.target_width,
             body.target_height,
@@ -79,12 +79,12 @@ async def outpaint_asset(
             prompt=body.prompt,
         )
         return {
-            "result_id": result.id,
-            "status": result.status,
-            "output_path": result.output_path,
-            "operation": result.operation,
-            "provider": result.provider,
-            "error": result.error,
+            "result_id": job.id,
+            "status": job.status,
+            "output_path": job.output_path,
+            "operation": job.augmentation_type,
+            "provider": job.provider,
+            "error": job.error_message,
         }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -102,7 +102,6 @@ async def auto_fit_assets(
         body.asset_ids,
         body.target_width,
         body.target_height,
-        db,
         provider_name=body.provider,
     )
     return {"job_id": job_id, "asset_count": len(body.asset_ids)}
@@ -113,22 +112,22 @@ async def get_augmentation_result(
     result_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    result = await _service.get_result(result_id)
-    if not result:
+    job = await _service.get_result(result_id, db)
+    if not job:
         raise HTTPException(status_code=404, detail="Result not found")
     return {
-        "id": result.id,
-        "source_asset_id": result.source_asset_id,
-        "output_path": result.output_path,
-        "operation": result.operation,
-        "provider": result.provider,
-        "status": result.status,
-        "before_score": result.before_score,
-        "after_score": result.after_score,
-        "identity_preserved": result.identity_preserved,
-        "created_at": result.created_at,
-        "params_used": result.params_used,
-        "error": result.error,
+        "id": job.id,
+        "source_asset_id": job.source_asset_id,
+        "output_path": job.output_path,
+        "operation": job.augmentation_type,
+        "provider": job.provider,
+        "status": job.status,
+        "before_score": job.before_score,
+        "after_score": job.after_score,
+        "identity_preserved": job.identity_preserved,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "params_used": job.parameters or {},
+        "error": job.error_message,
     }
 
 
@@ -157,21 +156,21 @@ async def reject_result(
 async def list_pending_results(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    results = await _service.list_pending_results()
+    jobs = await _service.list_pending_results(db)
     return {
         "results": [
             {
-                "id": r.id,
-                "source_asset_id": r.source_asset_id,
-                "output_path": r.output_path,
-                "operation": r.operation,
-                "provider": r.provider,
-                "status": r.status,
-                "before_score": r.before_score,
-                "after_score": r.after_score,
-                "identity_preserved": r.identity_preserved,
-                "created_at": r.created_at,
+                "id": j.id,
+                "source_asset_id": j.source_asset_id,
+                "output_path": j.output_path,
+                "operation": j.augmentation_type,
+                "provider": j.provider,
+                "status": j.status,
+                "before_score": j.before_score,
+                "after_score": j.after_score,
+                "identity_preserved": j.identity_preserved,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
             }
-            for r in results
+            for j in jobs
         ]
     }

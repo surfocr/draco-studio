@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from typing import Annotated
+
+logger = logging.getLogger(__name__)
 
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException
@@ -131,6 +134,20 @@ async def save_api_key(
         )
         db.add(row)
     await db.commit()
+
+    # Immediately inject decrypted key into the live registry so the provider
+    # becomes usable without restarting the server.
+    try:
+        registry = get_registry()
+        registry.set_config(body.provider_type, body.provider_name, {"api_key": body.api_key})
+        logger.info(
+            "Updated registry config for %s/%s after key save",
+            body.provider_type,
+            body.provider_name,
+        )
+    except Exception as exc:
+        logger.warning("Could not update registry config after key save: %s", exc)
+
     return {"status": "saved", "provider_name": body.provider_name}
 
 

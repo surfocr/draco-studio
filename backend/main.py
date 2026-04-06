@@ -92,6 +92,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("Providers registered: %s", registry)
 
+    # Load persisted provider API keys and inject into registry
+    try:
+        from database import AsyncSessionLocal
+        from models.provider_config import ProviderConfig
+        from sqlalchemy import select as _select
+        from api.providers import _get_fernet
+        fernet = _get_fernet()
+        async with AsyncSessionLocal() as _db:
+            rows = (await _db.execute(
+                _select(ProviderConfig).where(ProviderConfig.api_key_encrypted.isnot(None))
+            )).scalars().all()
+            for row in rows:
+                try:
+                    key = fernet.decrypt(row.api_key_encrypted.encode()).decode()
+                    registry.set_config(row.provider_type, row.provider_name, {"api_key": key})
+                    logger.info("Loaded saved API key for %s/%s", row.provider_type, row.provider_name)
+                except Exception as exc:
+                    logger.warning("Could not decrypt key for %s/%s: %s", row.provider_type, row.provider_name, exc)
+    except Exception as exc:
+        logger.warning("Could not load persisted provider API keys: %s", exc)
+
     # Load embedding provider eagerly (FastEmbed downloads model on first use)
     embed_provider = registry.get("embedding", "fastembed")
     if embed_provider:

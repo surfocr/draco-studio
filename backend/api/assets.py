@@ -430,9 +430,12 @@ async def ingest_dir(
 async def get_asset(
     asset_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str | None = Query(None),
 ) -> AssetDetail:
     asset = await db.get(Asset, asset_id)
     if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if project_id is not None and asset.project_id != project_id:
         raise HTTPException(status_code=404, detail="Asset not found")
     return AssetDetail.model_validate(asset)
 
@@ -442,9 +445,12 @@ async def update_asset(
     asset_id: str,
     body: AssetUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str | None = Query(None),
 ) -> AssetSummary:
     asset = await db.get(Asset, asset_id)
     if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if project_id is not None and asset.project_id != project_id:
         raise HTTPException(status_code=404, detail="Asset not found")
 
     if body.review_state is not None:
@@ -495,9 +501,12 @@ async def bulk_delete_assets(
 async def delete_asset(
     asset_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str | None = Query(None),
 ) -> None:
     asset = await db.get(Asset, asset_id)
     if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if project_id is not None and asset.project_id != project_id:
         raise HTTPException(status_code=404, detail="Asset not found")
 
     from providers.registry import get_registry

@@ -36,11 +36,16 @@ class AugmentationJob(Base):
 
     # Status
     status: Mapped[str] = mapped_column(String(16), default="pending")
-    # "pending"/"running"/"done"/"failed"/"cancelled"
+    # "pending"/"running"/"done"/"failed"/"cancelled"/"pending_review"/"approved"/"rejected"
     progress: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_job_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    # Job ID from external service (fal.ai, Replicate, etc.)
+
+    # Output tracking
+    output_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    before_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    after_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    identity_preserved: Mapped[bool | None] = mapped_column(nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.asset import Asset
+from models.augmentation import AugmentationJob as AugmentationJobModel
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,6 @@ class AugmentationJob:
     error: Optional[str] = None
 
 
-# In-memory store for augmentation results (would be DB table in production)
-_augmentation_results: dict[str, AugmentationResult] = {}
 
 
 class AugmentationService:
@@ -161,102 +160,121 @@ class AugmentationService:
         db: AsyncSession,
         provider_name: str = "auto",
         prompt: str | None = None,
-    ) -> AugmentationResult:
+    ) -> AugmentationJobModel:
         asset = await db.get(Asset, asset_id)
         if not asset:
             raise ValueError(f"Asset {asset_id} not found")
 
         provider = await self._resolve_editing_provider(provider_name)
 
-        from providers.base import OutpaintRequest
-        request = OutpaintRequest(
-            asset_id=asset.filepath,
-            target_width=target_width,
-            target_height=target_height,
-            prompt=prompt,
-        )
-
-        edit_result = await provider.outpaint(request)
-
-        result_id = str(uuid.uuid4())
-        aug_result = AugmentationResult(
-            id=result_id,
+        job = AugmentationJobModel(
+            id=str(uuid.uuid4()),
+            project_id=asset.project_id,
             source_asset_id=asset_id,
-            output_path=edit_result.output_path,
-            operation="outpaint",
-            provider=edit_result.provider,
-            status="pending_review",
+            augmentation_type="outpaint",
+            provider=provider_name,
+            parameters={"target_width": target_width, "target_height": target_height, "prompt": prompt},
+            status="running",
             before_score=asset.composite_score,
-            after_score=None,
-            identity_preserved=edit_result.identity_preserved,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            params_used={"target_width": target_width, "target_height": target_height},
-            error=edit_result.error if not edit_result.success else None,
+            started_at=datetime.now(timezone.utc),
         )
-        _augmentation_results[result_id] = aug_result
-        return aug_result
+        db.add(job)
+        await db.flush()
+
+        try:
+            from providers.base import OutpaintRequest
+            request = OutpaintRequest(
+                asset_id=asset.filepath,
+                target_width=target_width,
+                target_height=target_height,
+                prompt=prompt,
+            )
+            edit_result = await provider.outpaint(request)
+            job.output_path = edit_result.output_path
+            job.identity_preserved = edit_result.identity_preserved
+            job.status = "pending_review" if edit_result.success else "failed"
+            job.error_message = edit_result.error if not edit_result.success else None
+        except Exception as exc:
+            job.status = "failed"
+            job.error_message = str(exc)
+        finally:
+            job.finished_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        return job
 
     async def auto_fit_assets(
         self,
         asset_ids: list[str],
         target_width: int,
         target_height: int,
-        db: AsyncSession,
         provider_name: str = "auto",
     ) -> str:
-        job_id = str(uuid.uuid4())
+        _asset_ids = list(asset_ids)
+        _target_w = target_width
+        _target_h = target_height
+        _provider = provider_name
 
         async def _run() -> None:
-            for asset_id in asset_ids:
-                try:
-                    await self.outpaint_to_ratio(
-                        asset_id, target_width, target_height, db, provider_name
-                    )
-                except Exception as e:
-                    logger.error(f"auto_fit failed for {asset_id}: {e}")
+            from database import AsyncSessionLocal
+            async with AsyncSessionLocal() as worker_db:
+                for asset_id in _asset_ids:
+                    try:
+                        await self.outpaint_to_ratio(
+                            asset_id, _target_w, _target_h, worker_db, _provider
+                        )
+                    except Exception as e:
+                        logger.error("auto_fit failed for %s: %s", asset_id, e)
 
         from workers.job_queue import get_job_queue
         queue = get_job_queue()
-        await queue.submit(_run)
+        job_id = await queue.submit(_run)
         return job_id
 
     async def approve_result(self, result_id: str, db: AsyncSession) -> Asset:
-        result = _augmentation_results.get(result_id)
-        if not result:
-            raise ValueError(f"Result {result_id} not found")
+        job = await db.get(AugmentationJobModel, result_id)
+        if not job or job.status not in ("pending_review", "done"):
+            raise ValueError(f"Result {result_id} not found or not reviewable")
+        if not job.output_path:
+            raise ValueError(f"Result {result_id} has no output path")
 
-        source = await db.get(Asset, result.source_asset_id)
+        source = await db.get(Asset, job.source_asset_id)
         if not source:
-            raise ValueError(f"Source asset {result.source_asset_id} not found")
+            raise ValueError(f"Source asset {job.source_asset_id} not found")
 
         from pathlib import Path
 
         new_asset = Asset(
             id=str(uuid.uuid4()),
             project_id=source.project_id,
-            filename=Path(result.output_path).name,
-            filepath=result.output_path,
+            filename=Path(job.output_path).name,
+            filepath=job.output_path,
             is_augmented=True,
-            augmentation_source_id=result.source_asset_id,
-            composite_score=result.after_score or result.before_score,
+            augmentation_source_id=job.source_asset_id,
+            composite_score=job.after_score or job.before_score,
         )
         db.add(new_asset)
+        job.status = "approved"
         await db.flush()
         await db.commit()
-
-        result.status = "approved"
         return new_asset
 
     async def reject_result(self, result_id: str, db: AsyncSession) -> None:
-        result = _augmentation_results.get(result_id)
-        if result:
-            result.status = "rejected"
+        job = await db.get(AugmentationJobModel, result_id)
+        if job:
+            job.status = "rejected"
+            await db.commit()
 
-    async def get_result(self, result_id: str) -> AugmentationResult | None:
-        return _augmentation_results.get(result_id)
+    async def get_result(self, result_id: str, db: AsyncSession) -> AugmentationJobModel | None:
+        return await db.get(AugmentationJobModel, result_id)
 
-    async def list_pending_results(self) -> list[AugmentationResult]:
-        return [r for r in _augmentation_results.values() if r.status == "pending_review"]
+    async def list_pending_results(self, db: AsyncSession) -> list[AugmentationJobModel]:
+        result = await db.execute(
+            select(AugmentationJobModel).where(
+                AugmentationJobModel.status == "pending_review"
+            )
+        )
+        return list(result.scalars().all())
 
     async def _resolve_editing_provider(self, provider_name: str) -> Any:
         from providers.registry import get_registry
