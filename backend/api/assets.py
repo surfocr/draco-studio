@@ -7,6 +7,7 @@ import asyncio
 import io
 import logging
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -351,11 +352,15 @@ async def ingest_upload(
     """Upload files directly. Returns job_id for progress tracking."""
     from workers.job_queue import get_job_queue
 
-    # Save uploaded files to temp dir
+    # Save uploaded files to temp dir using unique paths to prevent collision
+    # when multiple files share the same basename.
     tmp_dir = tempfile.mkdtemp(prefix="draco_ingest_")
     file_paths = []
     for upload in files:
-        tmp_path = Path(tmp_dir) / (upload.filename or "unknown")
+        original_name = upload.filename or "unknown"
+        suffix = Path(original_name).suffix
+        unique_name = f"{uuid.uuid4().hex}{suffix}"
+        tmp_path = Path(tmp_dir) / unique_name
         content = await upload.read()
         tmp_path.write_bytes(content)
         file_paths.append(str(tmp_path))

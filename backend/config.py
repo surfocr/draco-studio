@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     PORT: int = 18082
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:18082"]
     DEBUG: bool = False
+    # Set to true only when running behind a trusted reverse proxy or in Docker.
+    # When false (default), the server rejects any request not from loopback.
+    ALLOW_REMOTE_ACCESS: bool = False
 
     # ── Provider API keys (all optional) ─────────────────────────────────────
     GEMINI_API_KEY: Optional[str] = None

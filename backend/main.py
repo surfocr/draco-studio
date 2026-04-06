@@ -161,6 +161,18 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # ── Loopback-only guard ───────────────────────────────────────────────────
+    if not settings.ALLOW_REMOTE_ACCESS:
+        @app.middleware("http")
+        async def loopback_only(request: Request, call_next):
+            client_ip = request.client.host if request.client else "unknown"
+            if client_ip not in ("127.0.0.1", "::1", "localhost"):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Remote access is disabled. Set ALLOW_REMOTE_ACCESS=true to enable."},
+                )
+            return await call_next(request)
+
     # ── Request timing middleware ─────────────────────────────────────────────
     @app.middleware("http")
     async def add_timing(request: Request, call_next):
