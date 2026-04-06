@@ -19,7 +19,7 @@ type SearchMode = 'text' | 'smart'
 
 const SMART_FILTER_PRESETS = [
   { label: 'Low quality (<40%)', rules: [{ field: 'composite_score', op: 'lt', value: 0.4 }] },
-  { label: 'No caption', rules: [{ field: 'caption_text', op: 'is_null', value: null }] },
+  { label: 'No caption', rules: [{ field: 'active_caption_id', op: 'is_null', value: null }] },
   { label: 'Multi-face images', rules: [{ field: 'face_count', op: 'gt', value: 1 }] },
   { label: 'Close-up portraits', rules: [{ field: 'shot_type', op: 'eq', value: 'closeup' }] },
   { label: 'Not yet reviewed', rules: [{ field: 'review_state', op: 'eq', value: 'pending' }] },

@@ -120,7 +120,7 @@ class CaptionService:
         """Queue batch caption generation. Returns job_id."""
         from workers.tasks import queue_caption_task
         jid = job_id or str(uuid.uuid4())
-        await queue_caption_task(asset_ids, provider_name, style, options, job_id=jid)
+        await queue_caption_task(asset_ids, provider_name, style, options)
         return jid
 
     async def compare_providers(
@@ -131,18 +131,20 @@ class CaptionService:
         db: AsyncSession,
         options: dict[str, Any] | None = None,
     ) -> list[CaptionVersion]:
-        """Generate captions from multiple providers simultaneously."""
-        tasks = [
-            self.generate(asset_id, pname, style, db, options, set_active=False)
-            for pname in provider_names
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        """Generate captions from multiple providers sequentially, each with its own session."""
+        from database import AsyncSessionLocal
+
         versions: list[CaptionVersion] = []
-        for pname, res in zip(provider_names, results):
-            if isinstance(res, Exception):
-                logger.warning("compare_providers: %s failed: %s", pname, res)
-            else:
-                versions.append(res)
+        for pname in provider_names:
+            try:
+                async with AsyncSessionLocal() as provider_db:
+                    version = await self.generate(
+                        asset_id, pname, style, provider_db, options, set_active=False
+                    )
+                    await provider_db.commit()
+                    versions.append(version)
+            except Exception as exc:
+                logger.warning("compare_providers: %s failed: %s", pname, exc)
         return versions
 
     # ── Version management ────────────────────────────────────────────────────

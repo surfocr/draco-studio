@@ -8,10 +8,23 @@ from pydantic import BaseModel
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models.asset import Asset
 
 router = APIRouter(prefix="/api/search", tags=["search"])
+
+
+def _thumbnail_url(asset: Asset) -> str | None:
+    """Return a browser-accessible URL for the asset thumbnail."""
+    if asset.thumbnail_path:
+        try:
+            from pathlib import Path
+            rel = Path(asset.thumbnail_path).relative_to(settings.storage_path)
+            return f"/files/{rel.as_posix()}"
+        except ValueError:
+            pass
+    return None
 
 
 class TextSearchRequest(BaseModel):
@@ -63,7 +76,7 @@ async def text_to_image_search(
                 {
                     "id": a.id,
                     "filename": a.filename,
-                    "thumbnail_url": a.thumbnail_path,
+                    "thumbnail_url": _thumbnail_url(a),
                     "composite_score": a.composite_score,
                     "similarity": scores.get(a.id, 0),
                     "caption_text": None,
@@ -119,7 +132,7 @@ async def image_to_image_search(
                 {
                     "id": a.id,
                     "filename": a.filename,
-                    "thumbnail_url": a.thumbnail_path,
+                    "thumbnail_url": _thumbnail_url(a),
                     "composite_score": a.composite_score,
                     "similarity": scores.get(a.id, 0),
                 }
@@ -147,6 +160,7 @@ async def smart_filter(req: SmartFilterRequest, db: AsyncSession = Depends(get_d
         "shot_type": Asset.shot_type,
         "dominant_emotion": Asset.dominant_emotion,
         "is_augmented": Asset.is_augmented,
+        "active_caption_id": Asset.active_caption_id,
     }
 
     conditions = []
