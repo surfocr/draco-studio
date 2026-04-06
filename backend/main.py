@@ -175,6 +175,7 @@ def create_app() -> FastAPI:
     from api.duplicates import router as duplicates_router
     from api.search import router as search_router
     from api.embeddings import router as embeddings_router
+    from api.admin import router as admin_router
 
     app.include_router(projects_router)
     app.include_router(assets_router)
@@ -190,6 +191,7 @@ def create_app() -> FastAPI:
     app.include_router(duplicates_router)
     app.include_router(search_router)
     app.include_router(embeddings_router)
+    app.include_router(admin_router)
 
     # ── Health check ──────────────────────────────────────────────────────────
     @app.get("/health")

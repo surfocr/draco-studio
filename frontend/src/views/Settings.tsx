@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle,
   XCircle,
@@ -498,21 +498,25 @@ function DataManagementSection() {
 
   async function handleClearThumbs() {
     try {
-      await fetch('/api/admin/clear-thumbnails', { method: 'POST' })
-      success('Thumbnail cache cleared')
-    } catch {
-      toastError('Failed to clear thumbnails')
+      const r = await fetch('/api/admin/clear-thumbnails', { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const data = await r.json()
+      success(`Thumbnail cache cleared (${data.deleted ?? 0} files)`)
+    } catch (e) {
+      toastError(`Failed to clear thumbnails: ${e instanceof Error ? e.message : 'unknown error'}`)
     }
   }
 
   async function handleVacuum() {
     if (!confirmVacuum) { setConfirmVacuum(true); return }
     try {
-      await fetch('/api/admin/vacuum', { method: 'POST' })
+      const r = await fetch('/api/admin/vacuum', { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       success('Database vacuumed')
       setConfirmVacuum(false)
-    } catch {
-      toastError('Vacuum failed')
+    } catch (e) {
+      toastError(`Vacuum failed: ${e instanceof Error ? e.message : 'unknown error'}`)
+      setConfirmVacuum(false)
     }
   }
 
