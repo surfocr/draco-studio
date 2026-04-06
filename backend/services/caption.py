@@ -117,11 +117,9 @@ class CaptionService:
         options: dict[str, Any] | None = None,
         job_id: str | None = None,
     ) -> str:
-        """Queue batch caption generation. Returns job_id."""
+        """Queue batch caption generation. Returns the real queue job_id."""
         from workers.tasks import queue_caption_task
-        jid = job_id or str(uuid.uuid4())
-        await queue_caption_task(asset_ids, provider_name, style, options)
-        return jid
+        return await queue_caption_task(asset_ids, provider_name, style, options)
 
     async def compare_providers(
         self,
@@ -318,16 +316,13 @@ class CaptionService:
         db: AsyncSession,
         output_dir: str | None = None,
     ) -> str:
-        """Write .txt sidecar files. Returns job_id."""
+        """Write .txt sidecar files. Returns the real queue job_id."""
         from workers.tasks import queue_export_sidecars_task
-        job_id = str(uuid.uuid4())
-        await queue_export_sidecars_task(
+        return await queue_export_sidecars_task(
             project_id=project_id,
             asset_ids=asset_ids,
             output_dir=output_dir,
-            job_id=job_id,
         )
-        return job_id
 
     async def write_sidecar_direct(
         self,

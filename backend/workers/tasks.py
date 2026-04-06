@@ -79,7 +79,7 @@ async def queue_export_sidecars_task(
     project_id: str,
     asset_ids: list[str],
     output_dir: str | None,
-    job_id: str,
+    job_id: str | None = None,
 ) -> str:
     """Queue sidecar .txt file export for a set of assets. Returns job_id."""
     from database import AsyncSessionLocal
