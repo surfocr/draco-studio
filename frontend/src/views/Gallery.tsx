@@ -402,11 +402,7 @@ export function Gallery() {
               ref={pathInputRef}
               type="text"
               className="input mb-3 w-full font-mono text-sm"
-              placeholder={
-                navigator.userAgent.includes('Win')
-                  ? 'C:\\Users\\you\\Pictures\\dataset'
-                  : '/home/you/pictures/dataset'
-              }
+              placeholder="C:\Users\you\Pictures\dataset  or  /home/you/pictures/dataset"
               value={importPath}
               onChange={(e) => setImportPath(e.target.value)}
               onKeyDown={(e) => {
