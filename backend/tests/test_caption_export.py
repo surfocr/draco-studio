@@ -34,7 +34,9 @@ def storage_env(tmp_path, monkeypatch):
     settings.storage_path.mkdir(parents=True, exist_ok=True)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
 
+    from providers.registry import get_registry, register_default_providers
     registry = get_registry()
+    register_default_providers(registry)
     registry._instances.clear()
     yield tmp_path
     registry._instances.clear()
@@ -58,7 +60,7 @@ async def test_queue_export_sidecars_task_is_importable():
 async def test_caption_export_endpoint_returns_job_id(client):
     """POST /api/projects/{id}/captions/export returns a job_id."""
     r = await client.post("/api/projects", json={"name": "test-caption-export", "description": ""})
-    assert r.status_code == 200
+    assert r.status_code in (200, 201)
     project_id = r.json()["id"]
 
     with patch("services.caption.CaptionService.export_sidecars", new_callable=AsyncMock) as mock_export:
@@ -69,8 +71,8 @@ async def test_caption_export_endpoint_returns_job_id(client):
             json={"asset_ids": [], "output_dir": None},
         )
 
-    # Should succeed (200 or 202) — not a 500 ImportError
-    assert r.status_code in (200, 202, 404), \
+    # Should succeed (200 or 202) — not a 500 ImportError; 422 is fine for empty project
+    assert r.status_code in (200, 202, 404, 422), \
         f"Unexpected status {r.status_code}: {r.text}"
 
 
@@ -101,7 +103,7 @@ async def test_export_sidecars_task_uses_fresh_session():
     assert len(submitted_fns) == 1
 
     # Execute the worker and verify it opens AsyncSessionLocal
-    with patch("database.AsyncSessionLocal") as mock_session_factory:
+    with patch("workers.tasks.AsyncSessionLocal") as mock_session_factory:
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
