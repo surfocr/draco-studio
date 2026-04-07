@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # When false (default), the server rejects any request not from loopback.
     ALLOW_REMOTE_ACCESS: bool = False
     # Semicolon-separated list of additional allowed directories for ingest-directory.
-    # User home and DATA_DIR are always allowed.
+    # User home directory and DATA_DIR are always allowed by default.
     ALLOWED_INGEST_ROOTS: str = ""
 
     # ── Provider API keys (all optional) ─────────────────────────────────────

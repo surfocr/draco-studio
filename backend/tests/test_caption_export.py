@@ -69,8 +69,8 @@ async def test_caption_export_endpoint_returns_job_id(client):
             json={"asset_ids": [], "output_dir": None},
         )
 
-    # Should succeed (200 or 202) — not a 500 ImportError
-    # 404 if project not found, 422 if project has no captioned assets
+    # Should succeed (200 or 202) — not a 500 ImportError.
+    # Returns 404 if project not found; 422 if the project has no captioned assets to export.
     assert r.status_code in (200, 202, 404, 422), \
         f"Unexpected status {r.status_code}: {r.text}"
 

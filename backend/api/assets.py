@@ -431,11 +431,12 @@ async def ingest_dir(
     if not requested.is_dir():
         raise HTTPException(status_code=400, detail="Directory not found")
 
-    # Security: restrict to explicitly allowed directories.
-    # Default: only DATA_DIR. Additional roots must be configured via
-    # ALLOWED_INGEST_ROOTS (semicolon-separated) in config or .env.
+    # Security: restrict to known-safe directories for ingest.
+    # Always allow: DATA_DIR and the current user's home directory.
+    # Additional roots can be added via ALLOWED_INGEST_ROOTS (semicolon-separated).
     data_root = Path(settings.DATA_DIR).resolve()
-    allowed_roots = [data_root]
+    home_root = Path.home().resolve()
+    allowed_roots = [data_root, home_root]
     extra_roots = getattr(settings, "ALLOWED_INGEST_ROOTS", "")
     if extra_roots:
         for root in extra_roots.split(";"):
@@ -450,7 +451,10 @@ async def ingest_dir(
     ):
         raise HTTPException(
             status_code=403,
-            detail="Directory is outside allowed ingest roots. Configure ALLOWED_INGEST_ROOTS to add directories.",
+            detail=(
+                "Directory is outside allowed ingest roots. "
+                "Allowed: home directory, DATA_DIR, and ALLOWED_INGEST_ROOTS."
+            ),
         )
 
     from workers.job_queue import get_job_queue

@@ -3,6 +3,7 @@ Duplicates router backed by the shared duplicate-detection service.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from database import get_db
 from models.asset import Asset
 from workers.tasks import queue_duplicate_scan
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["duplicates"])
 
 
@@ -108,8 +110,8 @@ async def get_duplicate_clusters(
             from services.duplicate import find_duplicates
             await find_duplicates(project_id, db, stages=["exact"])
             await db.flush()
-        except Exception:
-            pass  # Return empty results rather than 500 if scan fails
+        except Exception as exc:
+            logger.warning("Auto-scan failed for project %s: %s", project_id, exc)
 
     # Fetch assets that have a duplicate_cluster_id assigned
     asset_result = await db.execute(
