@@ -88,7 +88,9 @@ async def test_list_pending_results_filters_by_project(db):
 
 
 @pytest.mark.asyncio
-async def test_augmentation_preview_endpoint_serves_result_file(client, db, tmp_path):
+async def test_augmentation_preview_endpoint_serves_result_file(client, db, tmp_path, monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path))
     project = await _create_project(db, "preview")
     asset = await _create_asset(db, project.id, "source.png")
     output = tmp_path / "preview.png"
@@ -111,16 +113,19 @@ async def test_augmentation_preview_endpoint_serves_result_file(client, db, tmp_
 
 
 @pytest.mark.asyncio
-async def test_augmentation_preview_endpoint_404s_for_missing_file(client, db):
+async def test_augmentation_preview_endpoint_404s_for_missing_file(client, db, tmp_path, monkeypatch):
+    from config import settings
+    monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path))
     project = await _create_project(db, "missing-preview")
     asset = await _create_asset(db, project.id, "source.png")
+    missing_path = tmp_path / "definitely_missing" / "file.png"
     job = AugmentationJob(
         project_id=project.id,
         source_asset_id=asset.id,
         augmentation_type="outpaint",
         provider="basic_editor",
         status="pending_review",
-        output_path=str(Path("C:/definitely/missing/file.png")),
+        output_path=str(missing_path),
     )
     db.add(job)
     await db.commit()

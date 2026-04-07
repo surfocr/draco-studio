@@ -124,7 +124,6 @@ async def queue_export_sidecars_task(
     job_id: str | None = None,
 ) -> str:
     """Queue sidecar .txt file export for a set of assets. Returns job_id."""
-    from database import AsyncSessionLocal
     from services.caption import CaptionService
     from workers.job_queue import get_job_queue
 
@@ -132,6 +131,8 @@ async def queue_export_sidecars_task(
     service = CaptionService()
 
     async def _run() -> dict:
+        from database import AsyncSessionLocal
+
         written = 0
         errors: list[str] = []
         async with AsyncSessionLocal() as db:

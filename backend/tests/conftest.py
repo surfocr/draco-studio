@@ -9,11 +9,12 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Use an in-memory SQLite database for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Use a shared-cache in-memory SQLite database so all connections see the same data
+TEST_DATABASE_URL = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared&uri=true"
 
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 os.environ.setdefault("DRACO_SECRET_KEY", "test-secret-key-32chars-padding!!")
+os.environ["ALLOW_REMOTE_ACCESS"] = "true"
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -38,9 +39,8 @@ async def db(engine):
 
 @pytest_asyncio.fixture
 async def client(engine):
-    """FastAPI test client wired to the in-memory database."""
-    from database import get_db, AsyncSessionLocal
-    from sqlalchemy.ext.asyncio import AsyncSession
+    """FastAPI test client wired to the shared in-memory database."""
+    from database import get_db
     from main import app
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

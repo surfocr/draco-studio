@@ -10,6 +10,14 @@ from providers.registry import get_registry
 from services.face_clustering import run_face_clustering
 
 
+def _qdrant_available() -> bool:
+    try:
+        import qdrant_client  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 async def _create_project(db, name: str = "faces") -> Project:
     project = Project(name=name, description="")
     db.add(project)
@@ -85,6 +93,7 @@ def clean_registry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not _qdrant_available(), reason="qdrant-client not installed")
 async def test_face_clustering_prefers_highest_quality_thumbnail(db, clean_registry):
     from config import settings
 

@@ -12,6 +12,14 @@ from providers.registry import get_registry
 from services.duplicate import find_duplicates
 
 
+def _qdrant_available() -> bool:
+    try:
+        import qdrant_client  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 async def _create_project(db, name: str = "duplicates") -> Project:
     project = Project(name=name, description="")
     db.add(project)
@@ -71,6 +79,7 @@ def clean_registry():
 @pytest.mark.asyncio
 async def test_duplicates_endpoint_returns_stable_cluster_contract(db, clean_registry):
     project = await _create_project(db)
+    cluster_id = "test-cluster-1"
     lower = await _create_asset(
         db,
         project.id,
@@ -85,6 +94,12 @@ async def test_duplicates_endpoint_returns_stable_cluster_contract(db, clean_reg
         sha256_hash="hash-1",
         composite_score=0.92,
     )
+    # Simulate that a prior scan already assigned cluster IDs
+    lower.duplicate_cluster_id = cluster_id
+    lower.duplicate_type = "exact"
+    higher.duplicate_cluster_id = cluster_id
+    higher.duplicate_type = "exact"
+    await db.commit()
 
     async with _client_for_db(db) as client:
         response = await client.get(f"/api/projects/{project.id}/duplicates")
@@ -179,6 +194,10 @@ class _FakeEmbedProvider:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    not _qdrant_available(),
+    reason="qdrant-client not installed"
+)
 async def test_find_duplicates_detects_face_similarity_clusters(db, clean_registry):
     from config import settings
 
