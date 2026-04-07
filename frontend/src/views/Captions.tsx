@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Brain,
@@ -432,7 +432,7 @@ export function Captions() {
   const assets: AssetSummary[] = useMemo(() => {
     const items = assetsData?.items ?? []
     if (sortMode === 'caption_length') {
-      return [...items].sort((a, b) => {
+      return [...items].sort((_a, _b) => {
         // We don't have caption text here; just fallback to import order
         return 0
       })
@@ -644,9 +644,9 @@ export function Captions() {
   const words = countWords(editText)
   const tokens = countTokens(editText)
 
-  // Filter tabs counts
-  const captionedCount = assetsData?.items.filter((a) => !!a.active_caption_id).length ?? 0
-  const uncaptionedCount = assetsData?.items.filter((a) => !a.active_caption_id).length ?? 0
+  // Filter tabs counts (future: used for tab badge counts)
+  void (assetsData?.items.filter((a) => !!a.active_caption_id).length ?? 0)
+  void (assetsData?.items.filter((a) => !a.active_caption_id).length ?? 0)
 
   return (
     <div className="flex flex-col h-full overflow-hidden">

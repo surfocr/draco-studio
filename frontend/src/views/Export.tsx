@@ -214,7 +214,7 @@ const labelCls = 'block text-xs font-medium text-[var(--text-secondary)] mb-1 up
 // ── Tab 1: LoRA ────────────────────────────────────────────────────────────────
 
 function LoraTab({
-  validation,
+  validation: _validation,
   onExportStart,
 }: {
   validation: ExportValidation | undefined

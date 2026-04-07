@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Wand2, Tag, CheckCircle, Loader2, Plus, Trash2, Play, Eye, RefreshCw } from 'lucide-react'
 import { useProjectStore } from '@/stores/useProjectStore'

@@ -1,4 +1,4 @@
-import React from 'react'
+/* Score component */
 import { clsx } from 'clsx'
 
 interface ScoreProps {

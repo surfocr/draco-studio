@@ -13,7 +13,6 @@ interface UseVirtualGridOptions {
 
 export function useVirtualGrid({
   itemCount,
-  containerHeight,
   containerWidth,
   columnCount,
   itemHeight,

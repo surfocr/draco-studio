@@ -34,9 +34,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 
 type WizardMode = 'local' | 'api' | 'both'
 
-// Step indices
-const STEPS = ['welcome', 'mode', 'configure', 'verify'] as const
-type WizardStep = (typeof STEPS)[number]
+// Step names for wizard flow
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -562,7 +560,7 @@ function ConfigureStep({
   onNext: () => void
   onBack: () => void
 }) {
-  const [apiKeySaved, setApiKeySaved] = useState(false)
+  const [, setApiKeySaved] = useState(false)
 
   const handleApiKeySaved = useCallback(() => {
     setApiKeySaved(true)

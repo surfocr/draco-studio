@@ -1,4 +1,3 @@
-import React from 'react'
 import { NavLink } from 'react-router-dom'
 import { clsx } from 'clsx'
 import {
@@ -71,7 +70,6 @@ function ProjectSelector() {
 
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useAppStore()
-  const activeProject = useProjectStore((s) => s.activeProject)
 
   return (
     <aside
