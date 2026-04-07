@@ -19,8 +19,17 @@ from pathlib import Path
 def ensure_env_file(example_path: Path, target_path: Path) -> None:
     if target_path.exists() or not example_path.exists():
         return
-    target_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
-    print(f"[launcher] Created {target_path.relative_to(target_path.parent.parent if target_path.parent.parent.exists() else target_path.parent)} from example")
+    import secrets
+
+    content = example_path.read_text(encoding="utf-8")
+    # Replace the placeholder secret key with a securely generated one so the
+    # copied .env is safe to use immediately without manual editing.
+    content = content.replace(
+        "DRACO_SECRET_KEY=change_me_to_a_random_secret",
+        f"DRACO_SECRET_KEY={secrets.token_hex(32)}",
+    )
+    target_path.write_text(content, encoding="utf-8")
+    print(f"[launcher] Created {target_path.name} from example (DRACO_SECRET_KEY auto-generated)")
 
 
 def is_port_available(host: str, port: int) -> bool:
@@ -66,7 +75,12 @@ def npm_command() -> str:
         resolved = shutil.which(candidate)
         if resolved:
             return resolved
-    raise RuntimeError("npm is not available on PATH. Install Node.js and npm first.")
+    if os.name == "nt":
+        raise RuntimeError(
+            "npm is not available on PATH. Install Node.js 20+ from https://nodejs.org/ "
+            "and make sure 'Add to PATH' is checked, then reopen your terminal."
+        )
+    raise RuntimeError("npm is not available on PATH. Install Node.js 20+ and npm first.")
 
 
 def start_logged_process(

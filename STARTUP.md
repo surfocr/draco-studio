@@ -2,29 +2,31 @@
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11, 3.12, or 3.13
 - Node.js 20+
 - Optional: Ollama for local captioning and reasoning
 - Optional: NVIDIA GPU with CUDA for local AI providers
 
 ## Fastest Windows 11 Path
 
-Double-click [run-portable.bat](/C:/Users/zackb/Downloads/draco_studio/run-portable.bat).
+1. Install [Python 3.11+](https://www.python.org/downloads/) — check **"Add python.exe to PATH"**
+2. Install [Node.js 20+](https://nodejs.org/) — check **"Add to PATH"**
+3. Open a **new** terminal and run:
 
-It will:
-
-- create `backend/.venv` if needed
-- install backend dependencies on first run
-- install frontend dependencies on first run
-- run a quick local-model readiness check
-- start the supported local web app
-- open Draco automatically in your browser
-
-You can run the same flow from a terminal:
-
-```bash
+```cmd
 npm run start:win
 ```
+
+Or just double-click **`run-portable.bat`** in Explorer.
+
+`run-portable.bat` handles everything on first run:
+
+- detects Python 3.11–3.13 via the Windows `py` launcher or `python`
+- creates `backend\.venv` and installs Python dependencies
+- installs frontend Node.js dependencies
+- creates `.env` and `frontend/.env` with a generated `DRACO_SECRET_KEY`
+- runs a quick local-model readiness check
+- starts backend + frontend and opens Draco in your browser
 
 ## Standard Local Launch
 
@@ -42,6 +44,10 @@ Start the app:
 npm start
 ```
 
+`npm start` uses the `py` launcher first on Windows, then `python`. If Python is still
+not found, use `npm run start:win` — `run-portable.bat` handles Python detection and
+venv setup automatically.
+
 Hot-reload development mode:
 
 ```bash
@@ -52,19 +58,22 @@ npm run dev
 
 ### Backend
 
-```bash
+```cmd
 cd backend
 python -m venv .venv
 
-# Windows
+REM Windows
 .venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
+
+REM macOS/Linux
+REM source .venv/bin/activate
 
 pip install -r requirements.txt
-alembic upgrade head
 uvicorn main:app --reload --port 18082
 ```
+
+> `DEBUG=true` (the default in `.env.example`) auto-creates the database schema on
+> startup. No manual `alembic upgrade head` is needed for local development.
 
 ### Frontend
 
@@ -93,6 +102,14 @@ Open `http://127.0.0.1:5173`.
 
 ## Troubleshooting
 
-- Launcher logs: `.logs/launch/backend.log` and `.logs/launch/frontend.log`
+| Symptom | Fix |
+|---|---|
+| `'python' is not recognized` | Use `npm run start:win` (handles Python detection), or install Python and check **"Add to PATH"** |
+| `'npm' is not recognized` | Install Node.js 20+ from nodejs.org and reopen your terminal |
+| Backend port 18082 busy | The launcher picks the next free port automatically and prints it |
+| Frontend port 5173 busy | Same — the launcher picks an alternate port |
+| `DRACO_SECRET_KEY` warning | Run `npm start` or `run-portable.bat` once to auto-generate a proper secret in `.env` |
+| Startup fails silently | Check `.logs/launch/backend.log` and `.logs/launch/frontend.log` |
+
 - Health check: `http://127.0.0.1:18082/api/health`
 - If startup fails, rerun `run-portable.bat` or `npm start` from a terminal to see the full diagnostics.

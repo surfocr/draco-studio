@@ -38,7 +38,7 @@ This repo contains:
 - ORM models: `backend/models/`
 - Alembic migrations: `backend/alembic/versions/`
 
-Runtime/provider design is documented in [ARCHITECTURE.md](/C:/Users/zackb/Downloads/draco_studio/ARCHITECTURE.md).
+Runtime/provider design is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Project Runtime Configuration
 
@@ -93,10 +93,35 @@ The Settings UI now lets each project choose different caption/reasoning default
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11+ (3.12 and 3.13 also supported)
 - Node.js 20+
 - npm 10+
 - Optional but recommended for local captioning: Ollama
+
+### Windows 11 Quick Start
+
+The fastest path on Windows 11 requires no manual setup:
+
+1. Install [Python 3.11+](https://www.python.org/downloads/) — check **"Add python.exe to PATH"** during install
+2. Install [Node.js 20+](https://nodejs.org/) — check **"Add to PATH"** during install
+3. Open a new terminal in the repo root and run:
+
+```cmd
+npm run start:win
+```
+
+Or just double-click **`run-portable.bat`** in Explorer.
+
+`run-portable.bat` handles everything automatically on first run:
+
+- detects Python 3.11–3.13 via the Windows `py` launcher or `python`
+- creates `backend\.venv` and installs Python dependencies
+- installs frontend Node.js dependencies
+- creates `.env` and `frontend/.env` from the examples (generates a secure `DRACO_SECRET_KEY`)
+- runs a local model readiness check (Ollama, FastEmbed, InsightFace)
+- starts the backend and frontend, then opens the app in your browser
+
+> **Note:** Open a **new** terminal after installing Python or Node.js so the PATH changes take effect.
 
 ### 1. Install dependencies
 
@@ -130,10 +155,17 @@ cp .env.example .env
 cp frontend/.env.example frontend/.env
 ```
 
+On Windows (Command Prompt):
+
+```cmd
+copy .env.example .env
+copy frontend\.env.example frontend\.env
+```
+
 Important notes:
 
 - `.env.example` is tuned for local development and should usually keep `DEBUG=true`.
-- `DRACO_SECRET_KEY` should be changed if you plan to save provider API keys through the UI.
+- `DRACO_SECRET_KEY` — `npm start` and `run-portable.bat` auto-generate a secure value when creating `.env`. If you copy manually, replace `change_me_to_a_random_secret` with a random hex string: `python -c "import secrets; print(secrets.token_hex(32))"`.
 - Provider API keys must be saved through the encrypted API-key flow, not generic provider config fields.
 - `frontend/.env` should normally point `VITE_API_URL` at `http://127.0.0.1:18082`.
 
@@ -145,24 +177,26 @@ Normal local launch:
 npm start
 ```
 
-Fastest Windows 11 path:
+Fastest Windows 11 path (no manual venv setup needed):
 
-- double-click [run-portable.bat](/C:/Users/zackb/Downloads/draco_studio/run-portable.bat)
+- double-click [run-portable.bat](run-portable.bat)
 - or run:
 
-```bash
+```cmd
 npm run start:win
 ```
 
-What `npm start` does:
+What `npm start` / `npm run dev` does:
 
-- creates missing `.env` and `frontend/.env` files from the checked-in examples
+- creates missing `.env` and `frontend/.env` files from the checked-in examples (auto-generates `DRACO_SECRET_KEY`)
 - starts the backend
 - waits for `/api/health` to report a healthy backend
 - starts the frontend
 - opens the app automatically in your browser
 - picks a nearby free port if `18082` or `5173` is already busy
 - prints the most recent backend or frontend startup log lines if either process fails early
+
+> **Windows note:** `npm start` uses the `py` launcher first, then `python`. If Python is not found, use `npm run start:win` instead — `run-portable.bat` handles Python and dependency setup automatically.
 
 What `run-portable.bat` adds on Windows:
 
@@ -258,9 +292,9 @@ Important backend environment variables:
 
 Reference files:
 
-- repo root: [.env.example](/C:/Users/zackb/Downloads/draco_studio/.env.example)
-- backend-local alternative: [backend/.env.example](/C:/Users/zackb/Downloads/draco_studio/backend/.env.example)
-- frontend: [frontend/.env.example](/C:/Users/zackb/Downloads/draco_studio/frontend/.env.example)
+- repo root: [.env.example](.env.example)
+- backend-local alternative: [backend/.env.example](backend/.env.example)
+- frontend: [frontend/.env.example](frontend/.env.example)
 
 ## Startup And Diagnostics
 
@@ -337,9 +371,9 @@ This pass focused on making Draco ready for safe project-aware provider integrat
 
 Repo evaluation and recommended reuse decisions are documented in:
 
-- [AUDIT.md](/C:/Users/zackb/Downloads/draco_studio/AUDIT.md)
-- [MODEL_PROVIDER_MATRIX.md](/C:/Users/zackb/Downloads/draco_studio/MODEL_PROVIDER_MATRIX.md)
-- [ROADMAP.md](/C:/Users/zackb/Downloads/draco_studio/ROADMAP.md)
+- [AUDIT.md](AUDIT.md)
+- [MODEL_PROVIDER_MATRIX.md](MODEL_PROVIDER_MATRIX.md)
+- [ROADMAP.md](ROADMAP.md)
 
 Any future vendored code should include:
 

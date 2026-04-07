@@ -47,7 +47,12 @@ class Settings(BaseSettings):
     # ── Server ────────────────────────────────────────────────────────────────
     HOST: str = "127.0.0.1"
     PORT: int = 18082
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:18082"]
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:18082",
+        "http://127.0.0.1:18082",
+    ]
     DEBUG: bool = False
     # Set to true only when running behind a trusted reverse proxy or in Docker.
     # When false (default), the server rejects any request not from loopback.

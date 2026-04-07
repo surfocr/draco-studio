@@ -30,26 +30,28 @@ goto :done
 set "HOST_PYTHON="
 where py >nul 2>&1
 if not errorlevel 1 (
-  py -3.11 -c "import sys" >nul 2>&1
-  if not errorlevel 1 (
-    set "HOST_PYTHON=py -3.11"
+  for %%V in (3.13 3.12 3.11) do (
+    if not defined HOST_PYTHON (
+      py -%%V -c "import sys" >nul 2>&1
+      if not errorlevel 1 set "HOST_PYTHON=py -%%V"
+    )
   )
 )
 if not defined HOST_PYTHON (
   where python >nul 2>&1
-  if not errorlevel 1 (
-    set "HOST_PYTHON=python"
-  )
+  if not errorlevel 1 set "HOST_PYTHON=python"
 )
 if not defined HOST_PYTHON (
   echo [draco] Python 3.11+ was not found on PATH.
-  echo [draco] Install Python 3.11 or newer, then rerun this launcher.
+  echo [draco] Install Python 3.11 or newer from https://www.python.org/downloads/
+  echo [draco] Make sure "Add python.exe to PATH" is checked during installation.
   exit /b 1
 )
 
 %HOST_PYTHON% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if errorlevel 1 (
   echo [draco] Draco requires Python 3.11 or newer.
+  echo [draco] The Python found (%HOST_PYTHON%) is too old. Install Python 3.11+ from https://www.python.org/downloads/
   exit /b 1
 )
 

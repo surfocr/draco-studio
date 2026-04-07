@@ -3,6 +3,12 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Draco Dataset Studio v6
 
+:: NOTE: This script is a legacy fallback launcher. The recommended path is:
+::   run-portable.bat   (or: npm run start:win)
+:: run-portable.bat creates a venv, installs all deps, and opens the app
+:: automatically. Use this script only if you need to control the processes
+:: manually.
+
 echo ============================================================
 echo   Draco Dataset Studio - Local Launcher (Windows)
 echo ============================================================
@@ -109,8 +115,8 @@ echo   Press Ctrl+C to stop
 echo ============================================================
 echo.
 
-:: Start backend in background
-start "Draco Backend" /min cmd /c "cd /d "%CD%\backend" && "%VENV_PY%" -m uvicorn main:app --host 127.0.0.1 --port 18082"
+:: Start backend in background (use /D to set working directory, avoiding quoting issues)
+start "Draco Backend" /min /D "%CD%\backend" "%VENV_PY%" -m uvicorn main:app --host 127.0.0.1 --port 18082
 
 :: Wait a moment for backend to start
 timeout /t 2 /nobreak >nul

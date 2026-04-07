@@ -4,9 +4,9 @@
   "description": "AI-powered dataset curation platform for LoRA training",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "python scripts/run_local_app.py",
+    "start": "node scripts/launch.js",
     "start:win": "run-portable.bat",
-    "dev": "python scripts/run_local_app.py --reload",
+    "dev": "node scripts/launch.js --reload",
     "dev:manual": "concurrently -k -n backend,frontend \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "python scripts/run_backend.py --reload",
     "start:backend": "python scripts/run_backend.py",
