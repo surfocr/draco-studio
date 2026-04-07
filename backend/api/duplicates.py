@@ -212,17 +212,24 @@ async def get_duplicate_clusters(
                 if px != py:
                     parent[px] = py
 
+            # O(n²) pairwise comparison — acceptable for typical dataset sizes (< 10k images).
+            # For very large projects, run the background scan instead which uses indexed Qdrant search.
             for i, a1 in enumerate(unclustered):
                 try:
                     h1 = _imagehash.hex_to_hash(a1.phash)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to parse phash for asset %s: %s", a1.id[:8], exc)
                     continue
                 for a2 in unclustered[i + 1 :]:
                     try:
                         h2 = _imagehash.hex_to_hash(a2.phash)
                         if h1 - h2 <= threshold:
                             _union(str(a1.id), str(a2.id))
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug(
+                            "Failed to compare phash for assets %s/%s: %s",
+                            a1.id[:8], a2.id[:8], exc
+                        )
                         continue
 
             phash_groups: dict[str, list[str]] = {}
