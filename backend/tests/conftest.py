@@ -1,30 +1,43 @@
 """
-Shared test fixtures — in-memory SQLite database and FastAPI test client.
+Shared test fixtures — SQLite database and FastAPI test client.
+
+Each test gets its own fresh SQLite temp-file database so that:
+  - tables created by the engine fixture are visible on all connections
+  - data committed by one test never leaks into another
 """
 from __future__ import annotations
 
 import os
+import tempfile
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Use an in-memory SQLite database for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 os.environ.setdefault("DRACO_SECRET_KEY", "test-secret-key-32chars-padding!!")
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def engine():
+    """Fresh SQLite file database with full schema for each test."""
+    with tempfile.NamedTemporaryFile(suffix=".test.db", delete=False) as f:
+        db_path = f.name
+    os.unlink(db_path)  # Remove so SQLite creates a clean database
+
+    url = f"sqlite+aiosqlite:///{db_path}"
+    os.environ["DATABASE_URL"] = url  # update env so async database module sees it
+
     from database import Base
-    eng = create_async_engine(TEST_DATABASE_URL, echo=False)
+    eng = create_async_engine(url, echo=False)
     async with eng.begin() as conn:
         import models  # noqa: F401 — populate metadata
         await conn.run_sync(Base.metadata.create_all)
     yield eng
     await eng.dispose()
+    try:
+        os.unlink(db_path)
+    except OSError:
+        pass
 
 
 @pytest_asyncio.fixture

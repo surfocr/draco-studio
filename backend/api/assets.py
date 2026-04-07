@@ -432,10 +432,13 @@ async def ingest_dir(
         raise HTTPException(status_code=400, detail="Directory not found")
 
     # Security: restrict to explicitly allowed directories.
-    # Default: only DATA_DIR. Additional roots must be configured via
+    # Default: DATA_DIR and the user's home directory are always allowed so
+    # local users can import from their Pictures/Downloads/Documents without
+    # any extra config.  Additional roots can be added via
     # ALLOWED_INGEST_ROOTS (semicolon-separated) in config or .env.
     data_root = Path(settings.DATA_DIR).resolve()
-    allowed_roots = [data_root]
+    home_root = Path.home().resolve()
+    allowed_roots = [data_root, home_root]
     extra_roots = getattr(settings, "ALLOWED_INGEST_ROOTS", "")
     if extra_roots:
         for root in extra_roots.split(";"):
@@ -450,7 +453,7 @@ async def ingest_dir(
     ):
         raise HTTPException(
             status_code=403,
-            detail="Directory is outside allowed ingest roots. Configure ALLOWED_INGEST_ROOTS to add directories.",
+            detail="Directory is outside allowed ingest roots. Configure ALLOWED_INGEST_ROOTS in .env to add more directories.",
         )
 
     from workers.job_queue import get_job_queue

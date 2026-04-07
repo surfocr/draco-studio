@@ -304,10 +304,19 @@ class DatasetCoach:
                 estimated_quality = label
                 break
 
-        ranked_candidates = self._rank_training_candidates(assets)
+        # recommended_selection — quality-sorted so the caller gets a clean
+        # score-ranked list of all images worth including in training.
+        eligible = [a for a in assets if not a.is_rejected]
         selection_target_count = self._recommended_selection_target(total)
-        recommended_selection = ranked_candidates[:selection_target_count]
-        next_best = ranked_candidates[selection_target_count:selection_target_count + 10]
+        quality_sorted = sorted(eligible, key=lambda a: asset_quality_tuple(a), reverse=True)
+        recommended_selection = [a.id for a in quality_sorted[:selection_target_count]]
+
+        # keep_first — diversity-greedy ordering of the recommended set so the
+        # user sees the most varied, highest-value images first.
+        diversity_ordered = self._rank_training_candidates(quality_sorted[:selection_target_count])
+        next_best = [
+            a.id for a in quality_sorted[selection_target_count:selection_target_count + 10]
+        ]
 
         return CoachReport(
             project_id=project_id,
@@ -335,7 +344,7 @@ class DatasetCoach:
             issues=issues,
             remove_first=self._select_remove_first(assets, issues),
             recommended_selection=recommended_selection,
-            keep_first=recommended_selection[:10],
+            keep_first=diversity_ordered[:10],
             next_best=next_best,
             missing_coverage=self._compute_missing_coverage(assets),
             improvement_actions=self._compute_improvement_actions(issues),

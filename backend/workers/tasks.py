@@ -4,20 +4,23 @@ Task definitions — submit analysis and caption jobs to the queue.
 from __future__ import annotations
 
 import logging
+from sqlalchemy import select
+
+import database
+from workers.job_queue import get_job_queue
+from services.caption import CaptionService
 
 logger = logging.getLogger(__name__)
 
 
 async def queue_analysis_task(asset_id: str) -> str:
     """Queue full analysis for a single asset. Returns job_id."""
-    from database import AsyncSessionLocal
     from services.analysis import analyze_asset
-    from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
 
     async def _run() -> dict:
-        async with AsyncSessionLocal() as db:
+        async with database.AsyncSessionLocal() as db:
             asset = await analyze_asset(asset_id, db)
             await db.commit()
             return {"asset_id": asset_id, "ok": asset is not None}
@@ -32,16 +35,14 @@ async def queue_caption_task(
     options: dict | None = None,
 ) -> str:
     """Queue bulk caption generation. Returns job_id."""
-    from database import AsyncSessionLocal
     from services.caption import generate_caption
-    from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
 
     async def _run() -> dict:
         results = {"success": 0, "failed": 0, "errors": []}
-        async with AsyncSessionLocal() as db:
-            for i, asset_id in enumerate(asset_ids):
+        async with database.AsyncSessionLocal() as db:
+            for asset_id in asset_ids:
                 try:
                     version = await generate_caption(
                         asset_id, provider_name, style, db, options
@@ -61,14 +62,12 @@ async def queue_caption_task(
 
 async def queue_duplicate_scan(project_id: str) -> str:
     """Queue duplicate detection scan for a project."""
-    from database import AsyncSessionLocal
     from services.duplicate import find_duplicates
-    from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
 
     async def _run() -> dict:
-        async with AsyncSessionLocal() as db:
+        async with database.AsyncSessionLocal() as db:
             clusters = await find_duplicates(project_id, db)
             return {"clusters_found": len(clusters)}
 
@@ -81,17 +80,14 @@ async def queue_ai_judge_task(
     job_id: str | None = None,
 ) -> str:
     """Queue AI judge scoring for a batch of assets. Returns job_id."""
-    from database import AsyncSessionLocal
     from services.ai_judge import get_ai_judge
-    from workers.job_queue import get_job_queue
-    from sqlalchemy import select
     from models.asset import Asset
 
     queue = get_job_queue()
 
     async def _run() -> dict:
         results = {"scored": 0, "failed": 0, "errors": []}
-        async with AsyncSessionLocal() as db:
+        async with database.AsyncSessionLocal() as db:
             for asset_id in asset_ids:
                 try:
                     result = await db.execute(
@@ -124,17 +120,14 @@ async def queue_export_sidecars_task(
     job_id: str | None = None,
 ) -> str:
     """Queue sidecar .txt file export for a set of assets. Returns job_id."""
-    from database import AsyncSessionLocal
-    from services.caption import CaptionService
-    from workers.job_queue import get_job_queue
-
     queue = get_job_queue()
-    service = CaptionService()
 
     async def _run() -> dict:
+        # Instantiate inside _run so the class can be mocked in tests.
+        service = CaptionService()
         written = 0
         errors: list[str] = []
-        async with AsyncSessionLocal() as db:
+        async with database.AsyncSessionLocal() as db:
             for asset_id in asset_ids:
                 try:
                     path = await service.write_sidecar_direct(asset_id, db, output_dir)

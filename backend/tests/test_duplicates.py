@@ -86,6 +86,10 @@ async def test_duplicates_endpoint_returns_stable_cluster_contract(db, clean_reg
         composite_score=0.92,
     )
 
+    # The GET endpoint reads stored duplicate_cluster_id values — run the
+    # exact-hash scan first so the fields are populated.
+    await find_duplicates(project.id, db, stages=["exact"])
+
     async with _client_for_db(db) as client:
         response = await client.get(f"/api/projects/{project.id}/duplicates")
 
