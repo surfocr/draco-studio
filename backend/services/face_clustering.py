@@ -23,6 +23,28 @@ logger = logging.getLogger(__name__)
 DISTANCE_THRESHOLD = 0.6  # Cosine distance threshold for same-identity
 
 
+def compute_cluster_consistency(vectors: np.ndarray) -> float:
+    """
+    Return the mean cosine similarity of each vector to the cluster centroid.
+
+    A score of 1.0 means all embeddings are identical; a score near 0.5 or
+    below typically signals that the cluster contains multiple different people.
+
+    *vectors* must be L2-normalised (unit length rows).
+    """
+    if len(vectors) == 0:
+        return 0.0
+    if len(vectors) == 1:
+        return 1.0
+    centroid = vectors.mean(axis=0)
+    norm = float(np.linalg.norm(centroid))
+    if norm < 1e-9:
+        return 0.0
+    centroid /= norm
+    sims = vectors @ centroid  # shape (n,)
+    return float(np.clip(sims.mean(), 0.0, 1.0))
+
+
 async def run_face_clustering(project_id: str, db: AsyncSession) -> dict:
     """
     Cluster face embeddings for a project and create identity clusters.
@@ -149,6 +171,13 @@ async def run_face_clustering(project_id: str, db: AsyncSession) -> dict:
     for aid, label in asset_to_cluster.items():
         final_clusters[label].append(aid)
 
+    # Build a map from cluster label → list of normalised vectors (for consistency)
+    label_to_vectors: dict[int, list[np.ndarray]] = defaultdict(list)
+    for vec, (face_dict) in zip(vectors_normed, face_data):
+        label = asset_to_cluster.get(face_dict["asset_id"])
+        if label is not None:
+            label_to_vectors[label].append(vec)
+
     asset_result = await db.execute(
         select(Asset).where(Asset.id.in_(list(asset_to_cluster.keys())))
     )
@@ -161,12 +190,19 @@ async def run_face_clustering(project_id: str, db: AsyncSession) -> dict:
 
         rep_asset_id = pick_best_asset(unique_aids, asset_lookup)
 
+        # Compute intra-cluster consistency from normalised vectors
+        cluster_vecs = label_to_vectors.get(label, [])
+        consistency = compute_cluster_consistency(
+            np.array(cluster_vecs, dtype=np.float32) if cluster_vecs else np.empty((0, 0))
+        )
+
         identity = IdentityCluster(
             id=cluster_id,
             project_id=project_id,
             label=f"Person {clusters_created}",
             asset_count=len(unique_aids),
             thumbnail_asset_id=rep_asset_id,
+            identity_consistency_score=round(consistency, 4),
         )
         db.add(identity)
         cluster_label_to_id[label] = cluster_id

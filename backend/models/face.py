@@ -77,6 +77,9 @@ class IdentityCluster(Base):
     mean_age_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)
     dominant_gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
+    identity_consistency_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Mean cosine similarity of member embeddings to cluster centroid; 1.0 = perfect consistency
+
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

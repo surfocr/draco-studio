@@ -20,6 +20,51 @@ logger = logging.getLogger(__name__)
 
 FACE_EMBEDDING_DIM = 512  # ArcFace embedding dimension
 
+# Laplacian variance values above this threshold are considered sharp faces.
+# Empirically: blurry faces ~ <50, acceptably sharp ~ 100–300, very sharp > 500.
+# We normalise to 0-1 by clamping at _SHARP_CEIL and dividing.
+_SHARP_CEIL = 500.0
+
+
+def compute_face_sharpness(image_path: str, bbox: dict) -> float | None:
+    """
+    Return a 0-1 sharpness score for the face crop defined by *bbox*.
+
+    Uses the variance of the Laplacian operator, a standard no-reference
+    sharpness estimator.  Works without OpenCV by using PIL + NumPy only.
+
+    Returns None when the image cannot be read or the crop is empty.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+
+        img = Image.open(image_path).convert("L")  # grayscale
+        w, h = img.size
+
+        x1 = max(0, int(bbox.get("x1", 0)))
+        y1 = max(0, int(bbox.get("y1", 0)))
+        x2 = min(w, int(bbox.get("x2", w)))
+        y2 = min(h, int(bbox.get("y2", h)))
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        crop = img.crop((x1, y1, x2, y2))
+        arr = np.array(crop, dtype=np.float32)
+        # Laplacian kernel (4-neighbour)
+        lap = (
+            -4 * arr[1:-1, 1:-1]
+            + arr[:-2, 1:-1]
+            + arr[2:, 1:-1]
+            + arr[1:-1, :-2]
+            + arr[1:-1, 2:]
+        )
+        variance = float(np.var(lap))
+        return float(min(variance / _SHARP_CEIL, 1.0))
+    except Exception as exc:
+        logger.debug("face_sharpness failed for %s: %s", image_path, exc)
+        return None
+
 
 async def _upsert_face_embeddings(
     asset_id: str,
@@ -153,6 +198,10 @@ async def analyze_asset(
                     asset.dominant_emotion = pf.emotion
                     if pf.embedding:
                         asset.face_embedding_id = asset.id
+                    # Compute Laplacian-based sharpness for the primary face crop
+                    asset.face_sharpness = compute_face_sharpness(
+                        image_path, pf.bbox.to_dict()
+                    )
                 # Upsert face embeddings into Qdrant face collection
                 await _upsert_face_embeddings(
                     asset_id, asset.project_id, face_results.faces, registry

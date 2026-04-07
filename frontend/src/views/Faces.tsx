@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Users, Edit2, Merge, RefreshCw, X } from 'lucide-react'
+import { Users, Edit2, Merge, RefreshCw, X, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useJobStore } from '@/stores/useJobStore'
 import { facesApi } from '@/hooks/useApi'
@@ -12,6 +12,7 @@ interface FaceCluster {
   face_count: number
   asset_ids: string[]
   thumbnail_url: string | null
+  identity_consistency_score: number | null
 }
 
 interface Asset {
@@ -19,6 +20,56 @@ interface Asset {
   filename: string
   thumbnail_url: string
   composite_score: number
+  face_quality: number | null
+  face_sharpness: number | null
+  head_pose_yaw: number | null
+  age_estimate: number | null
+  gender_estimate: string | null
+  face_count: number
+}
+
+/** Format 0-1 score as a coloured percentage badge. */
+function ScoreBadge({ value, label }: { value: number | null; label: string }) {
+  if (value == null) return null
+  const pct = Math.round(value * 100)
+  const colour =
+    pct >= 70 ? 'text-emerald-400' : pct >= 40 ? 'text-amber-400' : 'text-red-400'
+  return (
+    <span className={`text-xs font-mono ${colour}`} title={label}>
+      {label} {pct}%
+    </span>
+  )
+}
+
+/** Pose acceptability badge based on yaw angle. */
+function PoseBadge({ yaw }: { yaw: number | null }) {
+  if (yaw == null) return null
+  const abs = Math.abs(yaw)
+  const label = abs <= 20 ? 'Front' : abs <= 45 ? 'Side' : 'Profile'
+  const colour =
+    abs <= 20 ? 'text-emerald-400' : abs <= 45 ? 'text-amber-400' : 'text-red-400'
+  return (
+    <span className={`text-xs ${colour}`} title={`Yaw ${yaw.toFixed(1)}°`}>
+      {label}
+    </span>
+  )
+}
+
+/** Consistency badge for an identity cluster. */
+function ConsistencyBadge({ score }: { score: number | null }) {
+  if (score == null) return null
+  const pct = Math.round(score * 100)
+  const Icon = pct >= 70 ? ShieldCheck : AlertTriangle
+  const colour = pct >= 70 ? 'text-emerald-400' : pct >= 50 ? 'text-amber-400' : 'text-red-400'
+  return (
+    <span
+      className={`flex items-center gap-0.5 text-xs font-mono ${colour}`}
+      title={`Identity consistency ${pct}%`}
+    >
+      <Icon size={11} />
+      {pct}%
+    </span>
+  )
 }
 
 export function Faces() {
@@ -32,6 +83,8 @@ export function Faces() {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [minFaces, setMinFaces] = useState(1)
+  const [minFaceQuality, setMinFaceQuality] = useState(0)
+  const [maxYaw, setMaxYaw] = useState(90)
 
   const { data: clusters = [], isLoading } = useQuery({
     queryKey: ['face-clusters', activeProject?.id],
@@ -39,7 +92,7 @@ export function Faces() {
     enabled: !!activeProject,
   })
 
-  const { data: clusterAssets = [] } = useQuery({
+  const { data: clusterAssets = [] } = useQuery<Asset[]>({
     queryKey: ['cluster-assets', selectedCluster?.id],
     queryFn: () => facesApi.getClusterAssets(selectedCluster!.id),
     enabled: !!selectedCluster,
@@ -127,6 +180,28 @@ export function Faces() {
               value={minFaces}
               onChange={e => setMinFaces(+e.target.value)}
               className="w-16 bg-zinc-800 text-white text-sm rounded px-2 py-1 border border-zinc-700"
+            />
+            <label className="text-zinc-400 text-sm">Min FQ:</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={5}
+              value={minFaceQuality}
+              onChange={e => setMinFaceQuality(+e.target.value)}
+              className="w-16 bg-zinc-800 text-white text-sm rounded px-2 py-1 border border-zinc-700"
+              title="Minimum face quality % for assets shown in cluster panel"
+            />
+            <label className="text-zinc-400 text-sm">Max yaw:</label>
+            <input
+              type="number"
+              min={0}
+              max={90}
+              step={5}
+              value={maxYaw}
+              onChange={e => setMaxYaw(+e.target.value)}
+              className="w-16 bg-zinc-800 text-white text-sm rounded px-2 py-1 border border-zinc-700"
+              title="Maximum absolute head yaw angle (degrees) — 90 = all poses"
             />
             <button
               onClick={() => { setMergeMode(!mergeMode); setMergeTarget(null) }}
@@ -218,7 +293,10 @@ export function Faces() {
                       </button>
                     </div>
                   )}
-                  <div className="text-zinc-500 text-xs mt-0.5">{cluster.face_count} faces</div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <div className="text-zinc-500 text-xs">{cluster.face_count} faces</div>
+                    <ConsistencyBadge score={cluster.identity_consistency_score} />
+                  </div>
                 </div>
               </div>
             ))}
@@ -234,14 +312,23 @@ export function Faces() {
               <div className="text-white text-sm font-medium">
                 {selectedCluster.label || `Identity ${selectedCluster.id.slice(0, 6)}`}
               </div>
-              <div className="text-zinc-500 text-xs">{selectedCluster.face_count} images</div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-zinc-500 text-xs">{selectedCluster.face_count} images</span>
+                <ConsistencyBadge score={selectedCluster.identity_consistency_score} />
+              </div>
             </div>
             <button onClick={() => setSelectedCluster(null)} className="text-zinc-500 hover:text-zinc-300">
               <X size={16} />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2">
-            {clusterAssets.map((asset: Asset) => (
+            {clusterAssets
+              .filter(
+                (a) =>
+                  (a.face_quality == null || a.face_quality * 100 >= minFaceQuality) &&
+                  (a.head_pose_yaw == null || Math.abs(a.head_pose_yaw) <= maxYaw),
+              )
+              .map((asset: Asset) => (
               <div key={asset.id} className="relative rounded overflow-hidden bg-zinc-800 aspect-square">
                 {asset.thumbnail_url ? (
                   <img src={asset.thumbnail_url} alt={asset.filename} className="w-full h-full object-cover" />
@@ -250,10 +337,17 @@ export function Faces() {
                     {asset.filename}
                   </div>
                 )}
-                <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5">
-                  <span className="text-white text-xs">
-                    {asset.composite_score != null ? (asset.composite_score * 100).toFixed(0) + '%' : '—'}
-                  </span>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5 flex flex-col gap-0.5">
+                  <div className="flex items-center justify-between">
+                    <ScoreBadge value={asset.face_quality} label="FQ" />
+                    <PoseBadge yaw={asset.head_pose_yaw} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <ScoreBadge value={asset.face_sharpness} label="Sh" />
+                    {asset.age_estimate != null && (
+                      <span className="text-zinc-400 text-xs">{Math.round(asset.age_estimate)}y</span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

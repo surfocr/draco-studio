@@ -34,6 +34,7 @@ async def list_identities(
             "thumbnail_asset_id": c.thumbnail_asset_id,
             "mean_age_estimate": c.mean_age_estimate,
             "dominant_gender": c.dominant_gender,
+            "identity_consistency_score": c.identity_consistency_score,
         }
         for c in clusters
     ]
@@ -88,6 +89,7 @@ async def list_face_clusters(
             "face_count": c.asset_count,
             "asset_ids": asset_ids,
             "thumbnail_url": thumbnail_url,
+            "identity_consistency_score": c.identity_consistency_score,
         })
     return out
 
@@ -108,6 +110,12 @@ async def list_cluster_assets(
             "filename": a.filename,
             "thumbnail_url": f"/api/assets/{a.id}/thumbnail",
             "composite_score": a.composite_score,
+            "face_quality": a.face_quality,
+            "face_sharpness": a.face_sharpness,
+            "head_pose_yaw": a.head_pose_yaw,
+            "age_estimate": a.age_estimate,
+            "gender_estimate": a.gender_estimate,
+            "face_count": a.face_count,
         }
         for a in assets
     ]
