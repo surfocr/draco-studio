@@ -59,7 +59,7 @@ async def queue_caption_task(
     return await queue.submit(_run, job_type="caption")
 
 
-async def queue_duplicate_scan(project_id: str) -> str:
+async def queue_duplicate_scan(project_id: str, stages: list[str] | None = None) -> str:
     """Queue duplicate detection scan for a project."""
     from database import AsyncSessionLocal
     from services.duplicate import find_duplicates
@@ -69,7 +69,7 @@ async def queue_duplicate_scan(project_id: str) -> str:
 
     async def _run() -> dict:
         async with AsyncSessionLocal() as db:
-            clusters = await find_duplicates(project_id, db)
+            clusters = await find_duplicates(project_id, db, stages=stages)
             return {"clusters_found": len(clusters)}
 
     return await queue.submit(_run, job_type="duplicate_scan")

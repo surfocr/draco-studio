@@ -59,6 +59,9 @@ async def _client_for_db(db):
 @pytest.fixture
 def clean_registry():
     registry = get_registry()
+    saved_classes = dict(registry._classes)
+    saved_instances = dict(registry._instances)
+    saved_configs = dict(registry._configs)
     registry._classes.clear()
     registry._instances.clear()
     registry._configs.clear()
@@ -66,6 +69,9 @@ def clean_registry():
     registry._classes.clear()
     registry._instances.clear()
     registry._configs.clear()
+    registry._classes.update(saved_classes)
+    registry._instances.update(saved_instances)
+    registry._configs.update(saved_configs)
 
 
 @pytest.mark.asyncio
@@ -222,3 +228,105 @@ async def test_find_duplicates_detects_face_similarity_clusters(db, clean_regist
     assert cluster.cluster_type == "face"
     assert set(cluster.asset_ids) == {asset_a.id, asset_b.id}
     assert cluster.representative_id == asset_b.id
+
+
+@pytest.mark.asyncio
+async def test_duplicate_scan_endpoint_accepts_stages_param(client):
+    create = await client.post("/api/projects", json={"name": "Staged Scan"})
+    project_id = create.json()["id"]
+
+    from unittest.mock import AsyncMock, patch
+
+    with patch("api.duplicates.queue_duplicate_scan", new_callable=AsyncMock) as mock_scan:
+        mock_scan.return_value = "staged-job-1"
+        response = await client.post(
+            f"/api/projects/{project_id}/duplicates/scan?stages=exact,phash"
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"job_id": "staged-job-1"}
+    mock_scan.assert_called_once_with(project_id, stages=["exact", "phash"])
+
+
+@pytest.mark.asyncio
+async def test_exclude_duplicates_marks_assets_as_excluded(db, clean_registry):
+    project = await _create_project(db, "exclude-test")
+    lower = await _create_asset(
+        db,
+        project.id,
+        "lower-ex.png",
+        sha256_hash="exclude-hash",
+        composite_score=0.50,
+    )
+    higher = await _create_asset(
+        db,
+        project.id,
+        "higher-ex.png",
+        sha256_hash="exclude-hash",
+        composite_score=0.90,
+    )
+
+    async with _client_for_db(db) as client:
+        response = await client.post(
+            f"/api/projects/{project.id}/duplicates/exclude",
+            json={"ids": [lower.id]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["excluded"] == 1
+
+    await db.refresh(lower)
+    await db.refresh(higher)
+    assert lower.export_state == "excluded"
+    assert higher.export_state != "excluded"
+
+
+@pytest.mark.asyncio
+async def test_exclude_duplicates_empty_ids_returns_400(client):
+    create = await client.post("/api/projects", json={"name": "Exclude Empty"})
+    project_id = create.json()["id"]
+    response = await client.post(
+        f"/api/projects/{project_id}/duplicates/exclude",
+        json={"ids": []},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_duplicates_detects_phash_clusters_on_the_fly(db, clean_registry):
+    """pHash near-duplicates are detected from stored phash fields without a prior scan."""
+    project = await _create_project(db, "phash-onthefly")
+
+    # Use the same fake phash value to simulate a near-match (distance 0)
+    asset_a = Asset(
+        project_id=project.id,
+        filename="a.png",
+        filepath="/data/a.png",
+        mime_type="image/png",
+        sha256_hash="phash-unique-a",
+        phash="0000000000000000",
+        composite_score=0.70,
+    )
+    asset_b = Asset(
+        project_id=project.id,
+        filename="b.png",
+        filepath="/data/b.png",
+        mime_type="image/png",
+        sha256_hash="phash-unique-b",
+        phash="0000000000000000",
+        composite_score=0.85,
+    )
+    db.add(asset_a)
+    db.add(asset_b)
+    await db.flush()
+
+    async with _client_for_db(db) as client:
+        response = await client.get(f"/api/projects/{project.id}/duplicates")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    phash_clusters = [c for c in body["clusters"] if c["cluster_type"] == "phash"]
+    assert len(phash_clusters) == 1
+    ids_in_cluster = {img["id"] for img in phash_clusters[0]["images"]}
+    assert ids_in_cluster == {asset_a.id, asset_b.id}
+    assert phash_clusters[0]["best_id"] == asset_b.id

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, CheckCircle, Layers, Loader2, Trash2 } from 'lucide-react'
+import { AlertCircle, CheckCircle, EyeOff, Layers, Loader2, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { duplicatesApi } from '@/hooks/useApi'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -138,6 +138,17 @@ export function Duplicates() {
     },
   })
 
+  const excludeMutation = useMutation({
+    mutationFn: (imageIds: string[]) => duplicatesApi.bulkExclude(activeProject!.id, imageIds),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      toast.success(`Excluded ${result.excluded} image(s) from export`)
+    },
+    onError: (mutationError: Error) => {
+      toast.error(mutationError.message || 'Failed to exclude duplicates')
+    },
+  })
+
   const scanMutation = useMutation({
     mutationFn: () => duplicatesApi.scan(activeProject!.id),
     onSuccess: (result) => {
@@ -210,6 +221,19 @@ export function Duplicates() {
     }
 
     removeMutation.mutate(toRemove)
+  }
+
+  function handleExcludeCluster(cluster: DuplicateCluster) {
+    const toExclude = getEffectiveImages(cluster)
+      .filter((image) => !image.keep)
+      .map((image) => image.id)
+
+    if (toExclude.length === 0) {
+      toast.info('No images are marked for exclusion')
+      return
+    }
+
+    excludeMutation.mutate(toExclude)
   }
 
   if (!activeProject) {
@@ -326,6 +350,19 @@ export function Duplicates() {
                   Keep Best
                 </button>
                 <button
+                  onClick={() => handleExcludeCluster(selectedCluster)}
+                  disabled={excludeMutation.isPending}
+                  className={clsx(
+                    'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors',
+                    'border-yellow-500/30 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20',
+                    'disabled:cursor-not-allowed disabled:opacity-50'
+                  )}
+                  title="Exclude marked images from export (non-destructive)"
+                >
+                  {excludeMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <EyeOff size={13} />}
+                  Exclude
+                </button>
+                <button
                   onClick={() => handleApplyCluster(selectedCluster)}
                   disabled={removeMutation.isPending}
                   className={clsx(
@@ -333,9 +370,10 @@ export function Duplicates() {
                     'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20',
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
+                  title="Permanently delete marked images from the project"
                 >
                   {removeMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                  Remove Marked
+                  Delete
                 </button>
               </div>
             </div>
@@ -359,10 +397,10 @@ export function Duplicates() {
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="inline-block h-3 w-3 rounded border border-border opacity-60" />
-                  Remove
+                  Remove / Exclude
                 </span>
                 <span className="ml-2 text-text-secondary/70">
-                  Click an image to toggle it. Best marks the recommended keeper.
+                  Click an image to toggle. <strong>Exclude</strong> hides from export (safe); <strong>Delete</strong> removes permanently.
                 </span>
               </div>
             </div>

@@ -584,8 +584,16 @@ export const duplicatesApi = {
   list: (projectId: string) =>
     api.get<DuplicatesResponse>(`/api/projects/${projectId}/duplicates`).then((r) => r.data),
 
-  scan: (projectId: string) =>
-    api.post<{ job_id: string }>(`/api/projects/${projectId}/duplicates/scan`).then((r) => r.data),
+  scan: (projectId: string, stages?: string) =>
+    api
+      .post<{ job_id: string }>(
+        `/api/projects/${projectId}/duplicates/scan${stages ? `?stages=${stages}` : ''}`
+      )
+      .then((r) => r.data),
+
+  /** Non-destructive: mark assets as excluded from export. */
+  bulkExclude: (projectId: string, ids: string[]) =>
+    api.post<{ excluded: number }>(`/api/projects/${projectId}/duplicates/exclude`, { ids }).then((r) => r.data),
 
   bulkDelete: (ids: string[]) =>
     api.post('/api/assets/bulk-delete', { ids }).then((r) => r.data),
