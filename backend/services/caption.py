@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from models.asset import Asset
 from models.caption import CaptionVersion
-from providers.registry import get_registry
+from services.runtime_config import resolve_provider_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -61,16 +61,24 @@ class CaptionService:
         if asset is None:
             raise LookupError(f"Asset {asset_id} not found")
 
-        registry = get_registry()
-        provider = registry.get("caption", provider_name)
+        resolved = await resolve_provider_for_task(
+            db,
+            asset.project_id,
+            "caption",
+            explicit_provider_name=provider_name,
+        )
+        provider = resolved.provider
+        effective_provider_name = resolved.provider_name or provider_name
         if provider is None:
             raise ValueError(f"Caption provider '{provider_name}' not registered")
-        if not await provider.is_available():
-            raise RuntimeError(f"Caption provider '{provider_name}' is unavailable")
 
-        result = await provider.generate(asset.filepath, style, options)
+        merged_options = dict(resolved.options)
+        if options:
+            merged_options.update(options)
+
+        result = await provider.generate(asset.filepath, style, merged_options)
         if not result.text:
-            raise RuntimeError(f"Provider {provider_name} returned empty caption")
+            raise RuntimeError(f"Provider {effective_provider_name} returned empty caption")
 
         if set_active:
             await db.execute(
@@ -99,12 +107,12 @@ class CaptionService:
 
         if set_active:
             asset.active_caption_id = version.id
-            asset.caption_provider = provider_name
+            asset.caption_provider = effective_provider_name
 
         await db.flush()
         logger.debug(
             "Generated %s/%s caption for %s (%d chars)",
-            provider_name, style, asset_id[:8], len(result.text),
+            effective_provider_name, style, asset_id[:8], len(result.text),
         )
         return version
 

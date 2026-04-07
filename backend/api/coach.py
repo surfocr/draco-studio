@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from services.asset_state import AssetStateService
 from services.coach import DatasetCoach
 
 router = APIRouter(prefix="/api/projects", tags=["coach"])
@@ -18,6 +19,12 @@ router = APIRouter(prefix="/api/projects", tags=["coach"])
 # Simple in-memory cache: { (project_id, trigger_words_tuple): (timestamp, CoachReport) }
 _report_cache: dict[tuple, tuple[float, object]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _invalidate_project_cache(project_id: str) -> None:
+    stale_keys = [key for key in _report_cache if key and key[0] == project_id]
+    for key in stale_keys:
+        _report_cache.pop(key, None)
 
 
 class ApplyActionRequest(BaseModel):
@@ -87,7 +94,7 @@ async def apply_coach_action(
     Actions:
     - remove_low_quality: sets is_rejected=True for affected assets
     - remove_exact_duplicates: sets is_rejected=True keeping one per sha256
-    - normalize_captions: placeholder, returns count
+    - normalize_captions: normalizes active captions for the selected assets
     """
     from models.asset import Asset
 
@@ -114,11 +121,16 @@ async def apply_coach_action(
         assets = result.scalars().all()
         for a in assets:
             if not a.is_rejected:
-                a.is_rejected = True
+                await AssetStateService.reject_asset(
+                    a,
+                    db,
+                    rejection_reason="Rejected by dataset coach: remove_low_quality",
+                )
                 affected += 1
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
         await db.commit()
-        # Invalidate cache
-        _report_cache.pop(project_id, None)
+        _invalidate_project_cache(project_id)
 
     elif action == "remove_exact_duplicates":
         # Load all project assets (or the provided subset)
@@ -154,17 +166,23 @@ async def apply_coach_action(
             # Sort by composite_score descending — keep first
             group_sorted = sorted(group, key=lambda x: x.composite_score or 0.0, reverse=True)
             for dup in group_sorted[1:]:
-                dup.is_rejected = True
+                await AssetStateService.reject_asset(
+                    dup,
+                    db,
+                    rejection_reason="Rejected by dataset coach: exact duplicate",
+                )
                 affected += 1
 
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
         await db.commit()
-        _report_cache.pop(project_id, None)
+        _invalidate_project_cache(project_id)
 
     elif action == "normalize_captions":
-        # Placeholder — counts captioned assets in selection
+        from services.caption import get_caption_service
         if body.asset_ids:
             result = await db.execute(
-                select(Asset).where(
+                select(Asset.id).where(
                     Asset.project_id == project_id,
                     Asset.id.in_(body.asset_ids),
                     Asset.active_caption_id.isnot(None),
@@ -172,14 +190,15 @@ async def apply_coach_action(
             )
         else:
             result = await db.execute(
-                select(Asset).where(
+                select(Asset.id).where(
                     Asset.project_id == project_id,
                     Asset.active_caption_id.isnot(None),
                 )
             )
-        affected = len(result.scalars().all())
-        # In a full implementation this would update caption text
-        _report_cache.pop(project_id, None)
+        asset_ids = [row[0] for row in result.all()]
+        affected = await get_caption_service().normalize(asset_ids, db) if asset_ids else 0
+        await db.commit()
+        _invalidate_project_cache(project_id)
 
     return {"affected": affected, "action": action}
 

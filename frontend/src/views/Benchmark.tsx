@@ -68,9 +68,9 @@ export default function Benchmark() {
   })
 
   // Watch job for completion
-  const activeJob = activeJobId ? jobs.find((j) => j.id === activeJobId) : null
+  const activeJob = activeJobId ? jobs[activeJobId] ?? null : null
   useEffect(() => {
-    if (activeJob?.status === 'completed' && activeJob.result) {
+    if (activeJob?.status === 'done' && activeJob.result) {
       setResults(activeJob.result as ProviderResult[])
       setActiveJobId(null)
     }

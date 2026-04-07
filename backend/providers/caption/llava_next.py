@@ -25,11 +25,17 @@ STYLE_PROMPTS = {
 class LLaVANextProvider(CaptionProvider):
     """LLaVA 1.6 (Mistral-7B backbone) caption provider."""
 
+    provider_id = "llava_next"
+    display_name = "LLaVA-NeXT (Mistral 7B)"
+    provider_type = "caption"
+    requires_gpu = True
+    vram_mb = 4000
+
     name = "llava_next"
     version = "v1.6-mistral-7b"
 
     def __init__(self, model_id: str = "llava-hf/llava-v1.6-mistral-7b-hf",
-                 use_4bit: bool = False, max_new_tokens: int = 512):
+                 use_4bit: bool = False, max_new_tokens: int = 512, **kwargs):
         self.model_id = model_id
         self.use_4bit = use_4bit
         self.max_new_tokens = max_new_tokens
@@ -37,6 +43,13 @@ class LLaVANextProvider(CaptionProvider):
         self._processor = None
         self._device = None
         self._load_error: Optional[str] = None
+
+    async def is_available(self) -> bool:
+        try:
+            import transformers  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
     def _load(self):
         if self._model is not None or self._load_error:
@@ -70,8 +83,11 @@ class LLaVANextProvider(CaptionProvider):
                        options: Optional[dict] = None) -> CaptionResult:
         self._load()
         if self._load_error:
-            return CaptionResult("", style, 0.0, self.name, self.model_id, 0,
-                                 error=self._load_error)
+            return CaptionResult(
+                text="", style=style, confidence=0.0, provider=self.name,
+                model=self.model_id, latency_ms=0,
+                raw={"error": self._load_error},
+            )
         try:
             import torch
             from PIL import Image
@@ -94,9 +110,15 @@ class LLaVANextProvider(CaptionProvider):
             input_len = inputs["input_ids"].shape[1]
             text = self._processor.decode(output[0][input_len:], skip_special_tokens=True).strip()
             latency = int((time.monotonic() - t0) * 1000)
-            return CaptionResult(text, style, 0.9, self.name, self.model_id, latency)
+            return CaptionResult(
+                text=text, style=style, confidence=0.9, provider=self.name,
+                model=self.model_id, latency_ms=latency,
+            )
         except Exception as e:
-            return CaptionResult("", style, 0.0, self.name, self.model_id, 0, error=str(e))
+            return CaptionResult(
+                text="", style=style, confidence=0.0, provider=self.name,
+                model=self.model_id, latency_ms=0, raw={"error": str(e)},
+            )
 
     async def generate_batch(self, image_paths: List[str], style: str = "training_literal",
                              options: Optional[dict] = None) -> List[CaptionResult]:

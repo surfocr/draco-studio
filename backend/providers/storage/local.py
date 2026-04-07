@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import io
 import logging
+import mimetypes
 import shutil
 import time
 from pathlib import Path
@@ -94,6 +95,27 @@ class LocalStorageProvider(StorageProvider):
             await f.write(file_bytes)
 
         logger.debug("Saved original: %s (%d bytes)", dest, len(file_bytes))
+        return str(dest)
+
+    async def save_original_from_path(
+        self, source_path: str, filename: str, project_id: str
+    ) -> str:
+        """Copy an existing file into managed storage. Returns absolute path string."""
+        dest = self._assets_dir(project_id) / filename
+        if dest.exists():
+            stem = dest.stem
+            suffix = dest.suffix
+            counter = 1
+            while dest.exists():
+                dest = dest.parent / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        def _copy() -> None:
+            shutil.copy2(source_path, dest)
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _copy)
+        logger.debug("Copied original: %s <- %s", dest, source_path)
         return str(dest)
 
     async def get_original(self, asset_path: str) -> bytes:
@@ -220,6 +242,38 @@ class LocalStorageProvider(StorageProvider):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _compute)
 
+    async def compute_hashes_from_path(self, file_path: str) -> dict[str, str]:
+        """Compute SHA-256 + perceptual hashes from a file on disk."""
+
+        def _compute() -> dict[str, str]:
+            sha256 = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    sha256.update(chunk)
+
+            result: dict[str, str] = {
+                "sha256": sha256.hexdigest(),
+                "phash": "",
+                "dhash": "",
+                "ahash": "",
+            }
+            if _IMAGEHASH_AVAILABLE:
+                try:
+                    with Image.open(file_path) as img:
+                        rgb = img.convert("RGB")
+                        result["phash"] = str(imagehash.phash(rgb))
+                        result["dhash"] = str(imagehash.dhash(rgb))
+                        result["ahash"] = str(imagehash.average_hash(rgb))
+                except Exception as exc:
+                    logger.warning("Could not compute perceptual hashes: %s", exc)
+            return result
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _compute)
+
     async def get_image_dimensions(self, image_path: str) -> tuple[int, int]:
         """Return (width, height)."""
         def _dims() -> tuple[int, int]:
@@ -228,6 +282,24 @@ class LocalStorageProvider(StorageProvider):
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _dims)
+
+    async def inspect_image(self, image_path: str) -> dict[str, Any]:
+        """Validate an image and return normalized metadata."""
+
+        def _inspect() -> dict[str, Any]:
+            with Image.open(image_path) as img:
+                img.load()
+                mime_type = Image.MIME.get(img.format or "")
+                if mime_type is None:
+                    mime_type, _ = mimetypes.guess_type(image_path)
+                return {
+                    "width": img.width,
+                    "height": img.height,
+                    "mime_type": mime_type or "application/octet-stream",
+                }
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _inspect)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

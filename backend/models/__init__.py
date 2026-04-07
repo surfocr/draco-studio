@@ -10,6 +10,8 @@ from models.augmentation import AugmentationJob, AugmentationResult
 from models.export import ExportJob
 from models.provider_config import ProviderConfig
 from models.preferences import UserPreferences
+from models.project_runtime_config import ProjectRuntimeConfig
+from models.job_run import JobRun
 
 __all__ = [
     "Project",
@@ -27,4 +29,6 @@ __all__ = [
     "ExportJob",
     "ProviderConfig",
     "UserPreferences",
+    "ProjectRuntimeConfig",
+    "JobRun",
 ]

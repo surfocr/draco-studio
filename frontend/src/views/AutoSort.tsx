@@ -1,17 +1,15 @@
 import React, { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { Wand2, Tag, CheckCircle, Loader2, Plus, Trash2, Play, Eye } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Wand2, Tag, CheckCircle, Loader2, Plus, Trash2, Play, Eye, RefreshCw } from 'lucide-react'
 import { useProjectStore } from '@/stores/useProjectStore'
-import axios from 'axios'
-
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || 'http://localhost:18082' })
+import api, { assetsApi } from '@/hooks/useApi'
+import { useToast } from '@/components/providers/ToastProvider'
 
 interface SortRule {
   id: string
   label: string
   description: string
-  action: 'approve' | 'reject' | 'flag' | 'tag'
-  tag?: string
+  action: 'approve' | 'reject' | 'flag'
   conditions: { field: string; op: string; value: any }[]
 }
 
@@ -20,6 +18,27 @@ interface SortPreview {
   matched_count: number
   sample_filenames: string[]
   action: string
+}
+
+async function fetchAllRuleMatches(projectId: string, rules: SortRule['conditions']) {
+  const pageSize = 500
+  let offset = 0
+  const matches: Array<{ id: string; filename: string }> = []
+
+  while (true) {
+    const response = await api.post('/api/search/smart_filter', {
+      project_id: projectId,
+      rules,
+      limit: pageSize,
+      offset,
+    })
+    const batch = response.data as Array<{ id: string; filename: string }>
+    matches.push(...batch)
+    if (batch.length < pageSize) break
+    offset += pageSize
+  }
+
+  return matches
 }
 
 const PRESET_RULES: SortRule[] = [
@@ -43,14 +62,6 @@ const PRESET_RULES: SortRule[] = [
     description: 'More than 1 face detected',
     action: 'flag',
     conditions: [{ field: 'face_count', op: 'gt', value: 1 }],
-  },
-  {
-    id: 'tag_closeup',
-    label: 'Tag close-up portraits',
-    description: 'Shot type is close-up',
-    action: 'tag',
-    tag: 'closeup',
-    conditions: [{ field: 'shot_type', op: 'eq', value: 'closeup' }],
   },
   {
     id: 'reject_no_face',
@@ -81,6 +92,8 @@ function actionCls(action: string) {
 
 export function AutoSort() {
   const activeProject = useProjectStore((s) => s.activeProject)
+  const queryClient = useQueryClient()
+  const { success, error: toastError } = useToast()
   const [activeRules, setActiveRules] = useState<SortRule[]>([])
   const [previews, setPreviews] = useState<SortPreview[]>([])
   const [applied, setApplied] = useState(false)
@@ -89,15 +102,11 @@ export function AutoSort() {
     mutationFn: async () => {
       const results = await Promise.all(
         activeRules.map(async (rule) => {
-          const r = await api.post('/api/search/smart_filter', {
-            project_id: activeProject?.id,
-            rules: rule.conditions,
-            limit: 5,
-          })
+          const r = await fetchAllRuleMatches(activeProject!.id, rule.conditions)
           return {
             rule_label: rule.label,
-            matched_count: r.data.length,
-            sample_filenames: r.data.slice(0, 3).map((a: any) => a.filename),
+            matched_count: r.length,
+            sample_filenames: r.slice(0, 3).map((a) => a.filename),
             action: rule.action,
           } satisfies SortPreview
         })
@@ -105,25 +114,32 @@ export function AutoSort() {
       setPreviews(results)
       return results
     },
+    onError: (error: Error) => {
+      toastError(error.message || 'Failed to preview rules')
+    },
   })
 
   const applyMutation = useMutation({
     mutationFn: async () => {
+      let totalAffected = 0
       for (const rule of activeRules) {
-        if (rule.action !== 'approve' && rule.action !== 'reject') continue
-        const r = await api.post('/api/search/smart_filter', {
-          project_id: activeProject?.id,
-          rules: rule.conditions,
-          limit: 1000,
-        })
-        const ids = r.data.map((a: any) => a.id)
+        const matches = await fetchAllRuleMatches(activeProject!.id, rule.conditions)
+        const ids = matches.map((a) => a.id)
         if (ids.length === 0) continue
-        await api.post(`/api/projects/${activeProject?.id}/assets/bulk-action`, {
-          asset_ids: ids,
-          action: rule.action,
-        })
+        const result = await assetsApi.bulkAction(activeProject!.id, rule.action, ids)
+        totalAffected += result.affected
       }
+      return totalAffected
+    },
+    onSuccess: (affected) => {
       setApplied(true)
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      queryClient.invalidateQueries({ queryKey: ['project-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['duplicates'] })
+      success(`Applied ${activeRules.length} rule${activeRules.length !== 1 ? 's' : ''} to ${affected} assets`)
+    },
+    onError: (error: Error) => {
+      toastError(error.message || 'Failed to apply auto-sort rules')
     },
   })
 
@@ -218,7 +234,7 @@ export function AutoSort() {
               className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white hover:bg-violet-500 rounded text-sm disabled:opacity-50"
             >
               {applyMutation.isPending ? (
-                <Loader2 size={14} className="animate-spin" />
+                <RefreshCw size={14} className="animate-spin" />
               ) : (
                 <Play size={14} />
               )}

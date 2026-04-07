@@ -1,23 +1,22 @@
 """
 Asset ingest pipeline.
 Handles file validation, hashing, deduplication, thumbnail generation,
-and database record creation.
+sidecar import, and database record creation.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import mimetypes
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.asset import Asset
+from models.caption import CaptionVersion
 from models.project import Project
 from providers.registry import get_registry
 
@@ -50,8 +49,40 @@ class IngestProgress:
         return round(self.completed / self.total * 100, 1)
 
 
+@dataclass
+class IngestSource:
+    file_path: str
+    original_filename: str | None = None
+    sidecar_text: str | None = None
+
+    @property
+    def display_name(self) -> str:
+        return Path(self.original_filename or self.file_path).name
+
+
+def _normalize_sources(items: Iterable[str | IngestSource]) -> list[IngestSource]:
+    normalized: list[IngestSource] = []
+    for item in items:
+        if isinstance(item, IngestSource):
+            normalized.append(item)
+        else:
+            normalized.append(IngestSource(file_path=str(item)))
+    return normalized
+
+
+def _read_sidecar_text(sidecar_path: Path) -> str | None:
+    if not sidecar_path.exists() or not sidecar_path.is_file():
+        return None
+    try:
+        text = sidecar_path.read_text(encoding="utf-8", errors="replace").strip()
+    except Exception as exc:
+        logger.warning("Failed to read sidecar %s: %s", sidecar_path, exc)
+        return None
+    return text or None
+
+
 async def ingest_files(
-    file_paths: list[str],
+    file_paths: list[str | IngestSource],
     project_id: str,
     db: AsyncSession,
     queue_analysis: bool = True,
@@ -62,42 +93,62 @@ async def ingest_files(
     """
     registry = get_registry()
     storage = registry.get("storage", "local")
+    sources = _normalize_sources(file_paths)
 
-    progress = IngestProgress(total=len(file_paths))
+    progress = IngestProgress(total=len(sources))
 
-    for file_path in file_paths:
-        progress.current_file = file_path
-        path = Path(file_path)
+    for source in sources:
+        progress.current_file = source.display_name
+        path = Path(source.file_path)
 
         try:
-            # Validate file exists
             if not path.exists() or not path.is_file():
-                progress.errors.append(f"File not found: {file_path}")
+                progress.errors.append(f"File not found: {source.display_name}")
                 progress.completed += 1
                 yield progress
                 continue
 
-            # Validate extension
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                progress.errors.append(f"Unsupported format: {path.name}")
+            extension = Path(source.display_name).suffix.lower() or path.suffix.lower()
+            if extension not in SUPPORTED_EXTENSIONS:
+                progress.errors.append(f"Unsupported format: {source.display_name}")
                 progress.completed += 1
                 yield progress
                 continue
 
-            # Read file bytes
-            with open(path, "rb") as f:
-                file_bytes = f.read()
-
-            if len(file_bytes) == 0:
-                progress.errors.append(f"Empty file: {path.name}")
+            file_size = path.stat().st_size
+            if file_size == 0:
+                progress.errors.append(f"Empty file: {source.display_name}")
                 progress.completed += 1
                 yield progress
                 continue
 
-            # Compute hashes
-            hashes = await storage.compute_hashes(file_bytes)
+            try:
+                if hasattr(storage, "inspect_image"):
+                    image_info = await storage.inspect_image(str(path))
+                    width = image_info.get("width")
+                    height = image_info.get("height")
+                    mime_type = image_info.get("mime_type")
+                else:
+                    width, height = await storage.get_image_dimensions(str(path))
+                    mime_type = None
+            except Exception as exc:
+                progress.errors.append(f"Invalid image file {source.display_name}: {exc}")
+                progress.completed += 1
+                yield progress
+                continue
 
-            # Check for exact duplicate (SHA-256)
+            if mime_type not in SUPPORTED_MIME_TYPES:
+                progress.errors.append(f"Unsupported image type: {source.display_name}")
+                progress.completed += 1
+                yield progress
+                continue
+
+            if hasattr(storage, "compute_hashes_from_path"):
+                hashes = await storage.compute_hashes_from_path(str(path))
+            else:
+                with open(path, "rb") as f:
+                    hashes = await storage.compute_hashes(f.read())
+
             existing = await db.execute(
                 select(Asset).where(
                     Asset.project_id == project_id,
@@ -107,44 +158,39 @@ async def ingest_files(
             existing_asset = existing.scalar_one_or_none()
 
             if existing_asset is not None:
-                logger.debug("Duplicate found (exact hash): %s", path.name)
+                logger.debug("Duplicate found (exact hash): %s", source.display_name)
                 progress.duplicates_found += 1
                 progress.completed += 1
                 yield progress
                 continue
 
-            # Detect MIME type
-            mime_type, _ = mimetypes.guess_type(str(path))
-            if mime_type not in SUPPORTED_MIME_TYPES:
-                mime_type = "image/jpeg"  # fallback
+            asset_id = str(uuid.uuid4())
+            filename = source.display_name
 
-            # Get image dimensions
-            try:
-                width, height = await storage.get_image_dimensions(str(path))
-            except Exception:
-                width, height = None, None
+            if hasattr(storage, "save_original_from_path"):
+                saved_path = await storage.save_original_from_path(str(path), filename, project_id)
+            else:
+                with open(path, "rb") as f:
+                    saved_path = await storage.save_original(f.read(), filename, project_id)
 
-            # Save original (copy to project storage)
-            saved_path = await storage.save_original(file_bytes, path.name, project_id)
-
-            # Generate thumbnails
             thumbnail_path = None
             thumbnail_small_path = None
             try:
                 thumbnail_path = await storage.save_thumbnail(
-                    saved_path, str(uuid.uuid4()), settings.THUMBNAIL_SIZE
+                    saved_path, asset_id, settings.THUMBNAIL_SIZE
+                )
+                thumbnail_small_path = await storage.save_thumbnail(
+                    saved_path, f"{asset_id}_sm", settings.THUMBNAIL_SMALL_SIZE
                 )
             except Exception as exc:
-                logger.warning("Failed to generate thumbnail for %s: %s", path.name, exc)
+                logger.warning("Failed to generate thumbnail for %s: %s", filename, exc)
 
-            # Create Asset record
-            asset_id = str(uuid.uuid4())
             asset = Asset(
                 id=asset_id,
                 project_id=project_id,
-                filename=path.name,
+                filename=filename,
                 filepath=saved_path,
-                file_size=len(file_bytes),
+                file_size=file_size,
                 mime_type=mime_type,
                 width=width,
                 height=height,
@@ -155,40 +201,41 @@ async def ingest_files(
                 thumbnail_path=thumbnail_path,
                 thumbnail_small_path=thumbnail_small_path,
             )
-
-            # Also save a small thumbnail using the proper asset_id
-            if thumbnail_path:
-                try:
-                    # Regenerate with correct asset_id
-                    thumbnail_path = await storage.save_thumbnail(
-                        saved_path, asset_id, settings.THUMBNAIL_SIZE
-                    )
-                    thumbnail_small_path = await storage.save_thumbnail(
-                        saved_path, f"{asset_id}_sm", settings.THUMBNAIL_SMALL_SIZE
-                    )
-                    asset.thumbnail_path = thumbnail_path
-                    asset.thumbnail_small_path = thumbnail_small_path
-                except Exception:
-                    pass
-
             db.add(asset)
-            await db.flush()  # get ID before updating project
+            await db.flush()
 
-            # Update project stats
+            if source.sidecar_text:
+                caption_id = str(uuid.uuid4())
+                caption = CaptionVersion(
+                    id=caption_id,
+                    asset_id=asset_id,
+                    text=source.sidecar_text,
+                    style="training_literal",
+                    provider="sidecar_import",
+                    model="",
+                    confidence=None,
+                    latency_ms=None,
+                    is_edited=False,
+                    is_active=True,
+                )
+                db.add(caption)
+                asset.active_caption_id = caption_id
+                asset.caption_provider = "sidecar_import"
+
             project = await db.get(Project, project_id)
             if project:
                 project.asset_count += 1
 
             progress.assets_created.append(asset_id)
 
-            # Queue analysis job
             if queue_analysis:
                 from workers.tasks import queue_analysis_task
+
                 await queue_analysis_task(asset_id)
 
         except Exception as exc:
-            logger.exception("Failed to ingest %s: %s", file_path, exc)
-            progress.errors.append(f"Error processing {Path(file_path).name}: {exc}")
+            logger.exception("Failed to ingest %s: %s", source.file_path, exc)
+            progress.errors.append(f"Error processing {source.display_name}: {exc}")
 
         progress.completed += 1
         yield progress
@@ -216,12 +263,20 @@ async def ingest_directory(
         raise ValueError(f"Not a directory: {dir_path}")
 
     glob = "**/*" if recursive else "*"
-    file_paths = [
-        str(p)
+    image_paths = sorted(
+        p
         for p in d.glob(glob)
         if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
-    file_paths.sort()
+    )
 
-    async for progress in ingest_files(file_paths, project_id, db, queue_analysis):
+    sources = [
+        IngestSource(
+            file_path=str(p),
+            original_filename=p.name,
+            sidecar_text=_read_sidecar_text(p.with_suffix(".txt")),
+        )
+        for p in image_paths
+    ]
+
+    async for progress in ingest_files(sources, project_id, db, queue_analysis):
         yield progress

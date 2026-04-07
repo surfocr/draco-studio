@@ -14,8 +14,93 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.asset import Asset
 from providers.registry import get_registry
+from services.runtime_config import resolve_provider_for_task
 
 logger = logging.getLogger(__name__)
+
+FACE_EMBEDDING_DIM = 512  # ArcFace embedding dimension
+
+
+async def _upsert_face_embeddings(
+    asset_id: str,
+    project_id: str,
+    faces: list,
+    registry,
+) -> None:
+    """Store face embeddings in the dedicated Qdrant face collection."""
+    import asyncio
+    import uuid
+    from config import settings
+
+    try:
+        from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue
+    except ImportError:
+        return
+
+    embed_provider = registry.get("embedding", "fastembed")
+    if not embed_provider or not hasattr(embed_provider, "_qdrant") or embed_provider._qdrant is None:
+        return
+
+    client = embed_provider._qdrant
+    collection = settings.QDRANT_FACE_COLLECTION
+
+    # Ensure face collection exists
+    loop = asyncio.get_event_loop()
+
+    def _ensure() -> None:
+        existing = [c.name for c in client.get_collections().collections]
+        if collection not in existing:
+            client.create_collection(
+                collection_name=collection,
+                vectors_config=VectorParams(size=FACE_EMBEDDING_DIM, distance=Distance.COSINE),
+            )
+            logger.info("Created Qdrant face collection: %s", collection)
+
+    await loop.run_in_executor(None, _ensure)
+
+    # Purge stale face points for this asset before inserting new ones
+    def _delete_old() -> None:
+        try:
+            client.delete(
+                collection_name=collection,
+                points_selector=Filter(
+                    must=[FieldCondition(key="asset_id", match=MatchValue(value=asset_id))]
+                ),
+            )
+        except Exception as exc:
+            logger.debug("Could not delete old face points for %s: %s", asset_id[:8], exc)
+
+    await loop.run_in_executor(None, _delete_old)
+
+    # Deterministic namespace for face point IDs
+    _FACE_NS = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+    # Build points for faces that have embeddings
+    points = []
+    for i, face in enumerate(faces):
+        if face.embedding and len(face.embedding) == FACE_EMBEDDING_DIM:
+            face_id = f"{asset_id}_face_{i}"
+            # Deterministic UUID5 → stable across restarts
+            point_id = str(uuid.uuid5(_FACE_NS, face_id))
+            points.append(PointStruct(
+                id=point_id,
+                vector=face.embedding,
+                payload={
+                    "asset_id": asset_id,
+                    "project_id": project_id,
+                    "face_index": i,
+                    "face_id": face_id,
+                },
+            ))
+
+    if not points:
+        return
+
+    def _upsert() -> None:
+        client.upsert(collection_name=collection, points=points)
+
+    await loop.run_in_executor(None, _upsert)
+    logger.debug("Stored %d face embedding(s) for asset %s", len(points), asset_id[:8])
 
 
 async def analyze_asset(
@@ -46,8 +131,13 @@ async def analyze_asset(
     _progress("face_detection", 10.0)
     face_results = None
     try:
-        face_provider = registry.get("face_detection", "insightface")
-        if face_provider and await face_provider.is_available():
+        face_resolution = await resolve_provider_for_task(
+            db,
+            asset.project_id,
+            "face_detection",
+        )
+        face_provider = face_resolution.provider
+        if face_provider:
             face_results = await face_provider.detect_faces(image_path)
             if face_results:
                 asset.face_count = face_results.face_count
@@ -62,15 +152,24 @@ async def analyze_asset(
                     asset.gender_estimate = pf.gender
                     asset.dominant_emotion = pf.emotion
                     if pf.embedding:
-                        asset.face_embedding_id = asset.id  # placeholder
+                        asset.face_embedding_id = asset.id
+                # Upsert face embeddings into Qdrant face collection
+                await _upsert_face_embeddings(
+                    asset_id, asset.project_id, face_results.faces, registry
+                )
     except Exception as exc:
         logger.warning("Face detection failed for %s: %s", asset_id[:8], exc)
 
     # ── Stage 2: Image embedding ──────────────────────────────────────────────
     _progress("embedding", 30.0)
     try:
-        embed_provider = registry.get("embedding", "fastembed")
-        if embed_provider and await embed_provider.is_available():
+        embed_resolution = await resolve_provider_for_task(
+            db,
+            asset.project_id,
+            "embedding",
+        )
+        embed_provider = embed_resolution.provider
+        if embed_provider:
             embed_result = await embed_provider.embed_image(image_path)
             if embed_result:
                 await embed_provider.upsert_embedding(
@@ -81,11 +180,36 @@ async def analyze_asset(
     except Exception as exc:
         logger.warning("Embedding failed for %s: %s", asset_id[:8], exc)
 
-    # ── Stage 3: Quality scoring ──────────────────────────────────────────────
+    # ── Stage 3: Scene understanding ─────────────────────────────────────────
+    _progress("scene_analysis", 45.0)
+    try:
+        scene_resolution = await resolve_provider_for_task(
+            db,
+            asset.project_id,
+            "scene_understanding",
+        )
+        scene_provider = scene_resolution.provider
+        if scene_provider:
+            scene_result = await scene_provider.analyze_scene(image_path)
+            if scene_result:
+                asset.scene_tags = scene_result.scene_tags
+                asset.object_tags = scene_result.object_tags
+                asset.lighting_tags = scene_result.lighting_tags
+                asset.background_clutter_score = scene_result.background_clutter
+                asset.dof_estimate = scene_result.dof_estimate
+    except Exception as exc:
+        logger.warning("Scene analysis failed for %s: %s", asset_id[:8], exc)
+
+    # ── Stage 4: Quality scoring ──────────────────────────────────────────────
     _progress("quality", 60.0)
     try:
-        quality_scorer = registry.get("quality", "composite")
-        if quality_scorer and await quality_scorer.is_available():
+        quality_resolution = await resolve_provider_for_task(
+            db,
+            asset.project_id,
+            "quality",
+        )
+        quality_scorer = quality_resolution.provider
+        if quality_scorer:
             quality_result = await quality_scorer.score_image(image_path, face_results)
             if quality_result:
                 asset.technical_quality = quality_result.technical_quality
@@ -97,7 +221,7 @@ async def analyze_asset(
     except Exception as exc:
         logger.warning("Quality scoring failed for %s: %s", asset_id[:8], exc)
 
-    # ── Stage 4: Duplicate detection (hash-based, fast) ───────────────────────
+    # ── Stage 5: Duplicate detection (hash-based, fast) ───────────────────────
     _progress("duplicate_check", 80.0)
     try:
         await _check_phash_duplicates(asset, db)

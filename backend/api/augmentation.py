@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from typing import Annotated
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +24,7 @@ class OutpaintRequest(BaseModel):
 
 
 class AutoFitRequest(BaseModel):
-    asset_ids: list[str]
+    asset_ids: list[str] | None = None
     target_width: int
     target_height: int
     provider: str = "auto"
@@ -99,14 +101,23 @@ async def auto_fit_assets(
     body: AutoFitRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    asset_count = await _service.resolve_auto_fit_asset_count(
+        project_id=project_id,
+        asset_ids=body.asset_ids or [],
+        db=db,
+    )
+    if asset_count == 0:
+        raise HTTPException(status_code=400, detail="No eligible assets available for augmentation")
+
     job_id = await _service.auto_fit_assets(
-        body.asset_ids,
+        body.asset_ids or [],
         body.target_width,
         body.target_height,
+        project_id=project_id,
         provider_name=body.provider,
         prompt=body.prompt,
     )
-    return {"job_id": job_id, "asset_count": len(body.asset_ids)}
+    return {"job_id": job_id, "asset_count": asset_count}
 
 
 @router.get("/api/augmentation/results/{result_id}")
@@ -157,8 +168,9 @@ async def reject_result(
 @router.get("/api/augmentation/results")
 async def list_pending_results(
     db: Annotated[AsyncSession, Depends(get_db)],
+    project_id: str | None = Query(default=None),
 ) -> dict:
-    jobs = await _service.list_pending_results(db)
+    jobs = await _service.list_pending_results(db, project_id=project_id)
     return {
         "results": [
             {
@@ -176,3 +188,25 @@ async def list_pending_results(
             for j in jobs
         ]
     }
+
+
+@router.get("/api/augmentation/preview/{result_id}")
+async def get_augmentation_preview(
+    result_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> FileResponse:
+    job = await _service.get_result(result_id, db)
+    if not job or not job.output_path:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    resolved = Path(job.output_path).resolve()
+    # Restrict preview to managed storage and ComfyUI output directories
+    from config import settings
+    allowed_roots = [
+        Path(settings.STORAGE_PATH).resolve(),
+        Path(settings.DATA_DIR).resolve(),
+    ]
+    if not any(root in resolved.parents or resolved == root for root in allowed_roots):
+        raise HTTPException(status_code=403, detail="Preview path outside managed storage")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="Preview file not found")
+    return FileResponse(str(resolved))

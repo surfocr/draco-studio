@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import type { Job } from '@/types/api'
 
+function isActiveJob(job: Pick<Job, 'status'>): boolean {
+  return job.status === 'running' || job.status === 'pending'
+}
+
 interface JobState {
   jobs: Record<string, Job>
   activeJobIds: string[]
@@ -21,17 +25,22 @@ export const useJobStore = create<JobState>()((set, get) => ({
   addJob: (job) =>
     set((s) => ({
       jobs: { ...s.jobs, [job.id]: job },
-      activeJobIds: s.activeJobIds.includes(job.id)
-        ? s.activeJobIds
-        : [...s.activeJobIds, job.id],
+      activeJobIds: isActiveJob(job)
+        ? (s.activeJobIds.includes(job.id) ? s.activeJobIds : [...s.activeJobIds, job.id])
+        : s.activeJobIds.filter((activeId) => activeId !== job.id),
     })),
 
   updateJob: (id, patch) =>
-    set((s) => ({
-      jobs: s.jobs[id]
-        ? { ...s.jobs, [id]: { ...s.jobs[id], ...patch } }
-        : s.jobs,
-    })),
+    set((s) => {
+      if (!s.jobs[id]) return s
+      const nextJob = { ...s.jobs[id], ...patch }
+      return {
+        jobs: { ...s.jobs, [id]: nextJob },
+        activeJobIds: isActiveJob(nextJob)
+          ? (s.activeJobIds.includes(id) ? s.activeJobIds : [...s.activeJobIds, id])
+          : s.activeJobIds.filter((activeId) => activeId !== id),
+      }
+    }),
 
   removeJob: (id) =>
     set((s) => {
@@ -43,9 +52,7 @@ export const useJobStore = create<JobState>()((set, get) => ({
   setJobs: (jobs) =>
     set({
       jobs: Object.fromEntries(jobs.map((j) => [j.id, j])),
-      activeJobIds: jobs
-        .filter((j) => j.status === 'running' || j.status === 'pending')
-        .map((j) => j.id),
+      activeJobIds: jobs.filter(isActiveJob).map((j) => j.id),
     }),
 
   getActiveJobs: () => {

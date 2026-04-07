@@ -75,6 +75,48 @@ async def queue_duplicate_scan(project_id: str) -> str:
     return await queue.submit(_run, job_type="duplicate_scan")
 
 
+async def queue_ai_judge_task(
+    asset_ids: list[str],
+    provider_name: str = "auto",
+    job_id: str | None = None,
+) -> str:
+    """Queue AI judge scoring for a batch of assets. Returns job_id."""
+    from database import AsyncSessionLocal
+    from services.ai_judge import get_ai_judge
+    from workers.job_queue import get_job_queue
+    from sqlalchemy import select
+    from models.asset import Asset
+
+    queue = get_job_queue()
+
+    async def _run() -> dict:
+        results = {"scored": 0, "failed": 0, "errors": []}
+        async with AsyncSessionLocal() as db:
+            for asset_id in asset_ids:
+                try:
+                    result = await db.execute(
+                        select(Asset).where(Asset.id == asset_id)
+                    )
+                    asset = result.scalar_one_or_none()
+                    if asset is None:
+                        results["failed"] += 1
+                        results["errors"].append(f"{asset_id}: not found")
+                        continue
+                    judge = get_ai_judge(
+                        provider_name,
+                        project_id=asset.project_id,
+                        task_key="ranking_explanation",
+                    )
+                    await judge.score_image(asset.filepath, asset_id, db=db)
+                    results["scored"] += 1
+                except Exception as exc:
+                    results["failed"] += 1
+                    results["errors"].append(f"{asset_id}: {exc}")
+        return results
+
+    return await queue.submit(_run, job_type="ai_judge", job_id=job_id)
+
+
 async def queue_export_sidecars_task(
     project_id: str,
     asset_ids: list[str],
@@ -104,4 +146,4 @@ async def queue_export_sidecars_task(
                     errors.append(f"{asset_id}: {exc}")
         return {"written": written, "errors": errors, "job_id": job_id}
 
-    return await queue.submit(_run, job_type="export_sidecars")
+    return await queue.submit(_run, job_type="export_sidecars", job_id=job_id)

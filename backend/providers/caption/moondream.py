@@ -8,7 +8,7 @@ Tradeoff: less detailed than JoyCaption, but runs on nearly any machine.
 from __future__ import annotations
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from providers.base import CaptionProvider, CaptionResult
 
@@ -32,6 +32,8 @@ STYLE_QUESTIONS: dict[str, str] = {
 class MoondreamProvider(CaptionProvider):
     """Moondream2 lightweight local caption provider."""
 
+    provider_id = "moondream"
+    display_name = "Moondream 2 (Local)"
     name = "moondream"
     version = "2"
 
@@ -54,6 +56,18 @@ class MoondreamProvider(CaptionProvider):
             return True
         except ImportError:
             return False
+
+    async def health_check(self) -> dict[str, Any]:
+        return {
+            "ok": await self.is_available(),
+            "latency_ms": 0,
+            "details": {
+                "model": self.model_id,
+                "revision": self.revision,
+                "loaded": self._loaded,
+                "error": self._load_error,
+            },
+        }
 
     def _load_model(self) -> bool:
         if self._loaded:

@@ -16,18 +16,21 @@ import type {
   CaptionConsistencyReport,
   CaptionVersion,
   CoachReport,
+  DuplicatesResponse,
   ExportJob,
   ExportValidation,
   Job,
   LeaderboardEntry,
   Project,
   ProjectCreate,
+  ProjectRuntimeConfig,
   ProviderHealthMap,
   RankingAssetPair,
   RankingSession,
   SortDir,
   SortField,
 } from '@/types/api'
+import type { ImportFileCandidate } from '@/lib/importFiles'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -36,6 +39,52 @@ const api = axios.create({
   timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 })
+
+function extractApiErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    if (error.code === 'ECONNABORTED') {
+      return 'Request timed out. The backend may be busy or unavailable.'
+    }
+
+    if (!error.response) {
+      const target = BASE_URL || 'the current app origin'
+      return `Cannot reach the Draco backend at ${target}. Check that the backend is running and reachable.`
+    }
+
+    const requestId = error.response.headers?.['x-request-id']
+    const data = error.response.data as
+      | { detail?: string | Array<{ msg?: string }> ; request_id?: string }
+      | undefined
+
+    let message = `Request failed with status ${error.response.status}`
+    if (typeof data?.detail === 'string' && data.detail.trim()) {
+      message = data.detail
+    } else if (Array.isArray(data?.detail) && data.detail.length > 0) {
+      message = data.detail.map((item) => item.msg).filter(Boolean).join('; ') || message
+    } else if (error.response.status === 503) {
+      message = 'The Draco backend is starting up or temporarily unavailable.'
+    } else if (error.response.status >= 500) {
+      message = 'The Draco backend hit an internal error while handling this request.'
+    }
+
+    const resolvedRequestId = requestId || data?.request_id
+    if (resolvedRequestId) {
+      message = `${message} (Request ID: ${resolvedRequestId})`
+    }
+    return message
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return 'Unexpected error'
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => Promise.reject(new Error(extractApiErrorMessage(error)))
+)
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -55,6 +104,15 @@ export const projectsApi = {
 
   stats: (id: string) =>
     api.get<Record<string, number>>(`/api/projects/${id}/stats`).then((r) => r.data),
+
+  getRuntime: (id: string) =>
+    api.get<ProjectRuntimeConfig>(`/api/projects/${id}/runtime`).then((r) => r.data),
+
+  updateRuntime: (
+    id: string,
+    data: Partial<Pick<ProjectRuntimeConfig, 'runtime_mode' | 'task_provider_overrides' | 'task_provider_options' | 'benchmark_preferences'>>
+  ) =>
+    api.patch<ProjectRuntimeConfig>(`/api/projects/${id}/runtime`, data).then((r) => r.data),
 }
 
 // ── Assets ────────────────────────────────────────────────────────────────────
@@ -89,9 +147,9 @@ export const assetsApi = {
 
   originalUrl: (id: string) => `${BASE_URL}/api/assets/${id}/original`,
 
-  ingestUpload: (projectId: string, files: File[]) => {
+  ingestUpload: (projectId: string, files: ImportFileCandidate[]) => {
     const form = new FormData()
-    files.forEach((f) => form.append('files', f))
+    files.forEach(({ file, relativePath }) => form.append('files', file, relativePath))
     return api
       .post<{ job_id: string; file_count: number }>(
         `/api/projects/${projectId}/assets/ingest`,
@@ -222,6 +280,9 @@ export const providersApi = {
   listByType: (type: string) =>
     api.get<{ type: string; providers: string[] }>(`/api/providers/${type}`).then((r) => r.data),
 
+  configs: () =>
+    api.get<{ configs: Record<string, Record<string, { config: Record<string, unknown>; has_api_key: boolean; is_default: boolean; is_enabled: boolean; live_config_keys: string[] }>> }>('/api/providers/configs').then((r) => r.data),
+
   testProvider: (type: string, name: string) =>
     api
       .post<{ ok: boolean; latency_ms: number; details: unknown }>(
@@ -246,6 +307,32 @@ export const providersApi = {
   getApiKeyStatus: () =>
     api
       .get<{ status: Record<string, boolean> }>('/api/providers/api-key-status')
+      .then((r) => r.data),
+
+  saveConfig: (
+    providerType: string,
+    config: Record<string, unknown> & { provider_name: string }
+  ) =>
+    api
+      .post<{ status: string; provider_type: string; provider_name: string }>(
+        `/api/providers/${providerType}/config`,
+        { config }
+      )
+      .then((r) => r.data),
+}
+
+export const adminApi = {
+  clearThumbnails: () =>
+    api.post<{ deleted: number }>('/api/admin/clear-thumbnails').then((r) => r.data),
+
+  vacuum: () =>
+    api.post<{ status: string }>('/api/admin/vacuum').then((r) => r.data),
+
+  storageInfo: () =>
+    api
+      .get<{ storage_path: string; data_dir: string; qdrant_path: string }>(
+        '/api/admin/storage-info'
+      )
       .then((r) => r.data),
 }
 
@@ -340,8 +427,14 @@ export const augmentationApi = {
   rejectResult: (resultId: string) =>
     api.post(`/api/augmentation/results/${resultId}/reject`).then((r) => r.data),
 
-  listPending: () =>
-    api.get<{ results: AugmentationResult[] }>('/api/augmentation/results').then((r) => r.data),
+  listPending: (projectId?: string) =>
+    api
+      .get<{ results: AugmentationResult[] }>('/api/augmentation/results', {
+        params: projectId ? { project_id: projectId } : undefined,
+      })
+      .then((r) => r.data),
+
+  previewUrl: (resultId: string) => `${BASE_URL}/api/augmentation/preview/${resultId}`,
 }
 
 // ── Export (enhanced) ─────────────────────────────────────────────────────────
@@ -355,6 +448,7 @@ export const exportApi = {
       caption_style?: string
       include_only_captioned?: boolean
       include_only_approved?: boolean
+      asset_ids?: string[]
       min_score?: number | null
       max_images?: number | null
       image_format?: string
@@ -381,6 +475,10 @@ export const exportApi = {
       batch_size?: number
       network_rank?: number
       network_alpha?: number
+      caption_style?: string
+      include_only_captioned?: boolean
+      include_only_approved?: boolean
+      asset_ids?: string[]
       generate_train_script?: boolean
       create_zip?: boolean
     }
@@ -410,11 +508,31 @@ export const exportApi = {
   getJob: (exportJobId: string) =>
     api.get<ExportJob>(`/api/export/jobs/${exportJobId}`).then((r) => r.data),
 
+  cancelJob: (exportJobId: string) =>
+    api.post<{ ok: boolean; export_job_id: string; job_id: string }>(`/api/export/jobs/${exportJobId}/cancel`).then((r) => r.data),
+
   downloadUrl: (exportJobId: string) =>
     `${BASE_URL}/api/export/jobs/${exportJobId}/download`,
 
   validate: (projectId: string) =>
     api.get<ExportValidation>(`/api/projects/${projectId}/export/validate`).then((r) => r.data),
+
+  preview: (
+    projectId: string,
+    filters: {
+      asset_ids?: string[]
+      include_only_captioned?: boolean
+      include_only_approved?: boolean
+      min_score?: number | null
+      max_images?: number | null
+    }
+  ) =>
+    api
+      .post<{ count: number; captioned_count: number; uncaptioned_count: number }>(
+        `/api/projects/${projectId}/export/preview`,
+        filters
+      )
+      .then((r) => r.data),
 
   // Legacy compat
   create: (data: {
@@ -429,6 +547,48 @@ export const exportApi = {
 
   get: (exportJobId: string) =>
     api.get(`/api/export/${exportJobId}`).then((r) => r.data),
+}
+
+// ── Faces ────────────────────────────────────────────────────────────────────
+
+export const facesApi = {
+  listClusters: (projectId: string) =>
+    api.get(`/api/faces/clusters?project_id=${projectId}`).then((r) => r.data),
+
+  getClusterAssets: (clusterId: string) =>
+    api.get(`/api/faces/clusters/${clusterId}/assets`).then((r) => r.data),
+
+  renameCluster: (clusterId: string, label: string) =>
+    api.post(`/api/faces/clusters/${clusterId}/rename`, { label }).then((r) => r.data),
+
+  mergeClusters: (sourceId: string, targetId: string) =>
+    api.post('/api/faces/clusters/merge', { source_id: sourceId, target_id: targetId }).then((r) => r.data),
+
+  runClustering: (projectId: string) =>
+    api.post<{ job_id: string }>(`/api/projects/${projectId}/faces/cluster`).then((r) => r.data),
+}
+
+// ── Search ───────────────────────────────────────────────────────────────────
+
+export const searchApi = {
+  textSearch: (projectId: string, query: string, topK = 40) =>
+    api.post('/api/search/text', { project_id: projectId, query, top_k: topK }).then((r) => r.data),
+
+  smartFilter: (projectId: string, rules: object[], limit = 200) =>
+    api.post('/api/search/smart_filter', { project_id: projectId, rules, limit }).then((r) => r.data),
+}
+
+// ── Duplicates ───────────────────────────────────────────────────────────────
+
+export const duplicatesApi = {
+  list: (projectId: string) =>
+    api.get<DuplicatesResponse>(`/api/projects/${projectId}/duplicates`).then((r) => r.data),
+
+  scan: (projectId: string) =>
+    api.post<{ job_id: string }>(`/api/projects/${projectId}/duplicates/scan`).then((r) => r.data),
+
+  bulkDelete: (ids: string[]) =>
+    api.post('/api/assets/bulk-delete', { ids }).then((r) => r.data),
 }
 
 // ── Ranking (enhanced) ────────────────────────────────────────────────────────
@@ -474,6 +634,17 @@ export const rankingApi = {
         ...(opts ?? {}),
       })
       .then((r) => r.data),
+
+  skipPair: (sessionId: string, assetAId: string, assetBId: string) =>
+    api
+      .post(`/api/ranking/sessions/${sessionId}/skip`, {
+        asset_a_id: assetAId,
+        asset_b_id: assetBId,
+      })
+      .then((r) => r.data),
+
+  undoLastComparison: (sessionId: string) =>
+    api.post(`/api/ranking/sessions/${sessionId}/undo`).then((r) => r.data),
 
   getLeaderboard: (sessionId: string, limit = 100) =>
     api

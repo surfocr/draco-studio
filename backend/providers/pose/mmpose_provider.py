@@ -2,20 +2,33 @@
 from __future__ import annotations
 import time
 from typing import Optional, List, Dict, Any
-from providers.base import PoseProvider
+from providers.base import PoseProvider, PoseResult
 
 class MMPoseProvider(PoseProvider):
     """MMPose RTMPose whole-body 133-keypoint provider."""
+
+    provider_id = "mmpose"
+    display_name = "MMPose (RTMPose)"
+    provider_type = "pose"
+    requires_gpu = True
+    vram_mb = 1500
 
     name = "mmpose"
     version = "rtmpose-l"
 
     def __init__(self, model_config: str = "rtmpose-l_8xb32-270e_coco-wholebody-384x288",
-                 device: str = "auto"):
+                 device: str = "auto", **kwargs):
         self.model_config = model_config
         self._device = device
         self._pose_estimator = None
         self._load_error: Optional[str] = None
+
+    async def is_available(self) -> bool:
+        try:
+            import mmpose  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
     def _load(self):
         if self._pose_estimator is not None or self._load_error:
@@ -68,11 +81,39 @@ class MMPoseProvider(PoseProvider):
         except Exception as e:
             return {"error": str(e), "people": []}
 
+    async def estimate_pose(self, image_path: str) -> PoseResult | None:
+        """PoseProvider ABC method — wraps detect() and returns PoseResult."""
+        result = await self.detect(image_path)
+        if result.get("error") or not result.get("people"):
+            return None
+        person = result["people"][0]
+        # Convert flat keypoints list to named dict
+        kpts = person.get("keypoints", [])
+        scores = person.get("scores", [])
+        keypoints_dict: dict[str, list[float]] = {}
+        # Map first 17 COCO keypoints
+        coco_names = [
+            "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+            "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+            "left_wrist", "right_wrist", "left_hip", "right_hip",
+            "left_knee", "right_knee", "left_ankle", "right_ankle",
+        ]
+        for i, name in enumerate(coco_names):
+            if i < len(kpts):
+                conf = scores[i] if i < len(scores) else 0.0
+                keypoints_dict[name] = [kpts[i][0], kpts[i][1], conf]
+        return PoseResult(
+            keypoints=keypoints_dict,
+            shot_type="unknown",
+            provider=self.name,
+        )
+
     async def health_check(self) -> dict:
         self._load()
         return {
+            "ok": self._load_error is None,
             "provider": self.name,
             "version": self.version,
-            "available": self._load_error is None,
-            "error": self._load_error,
+            "latency_ms": 0,
+            "details": {"error": self._load_error},
         }

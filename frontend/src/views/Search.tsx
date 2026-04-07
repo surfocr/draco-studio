@@ -2,9 +2,7 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Search as SearchIcon, Image, Type, Sliders, Loader2 } from 'lucide-react'
 import { useProjectStore } from '@/stores/useProjectStore'
-import axios from 'axios'
-
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || 'http://localhost:18082' })
+import { searchApi } from '@/hooks/useApi'
 
 interface SearchResult {
   id: number
@@ -51,20 +49,12 @@ export default function Search() {
 
   const textSearch = useMutation({
     mutationFn: (query: string) =>
-      api.post('/api/search/text', {
-        project_id: activeProject?.id,
-        query,
-        top_k: 40,
-      }).then(r => r.data),
+      searchApi.textSearch(activeProject!.id, query),
   })
 
   const smartFilter = useMutation({
     mutationFn: (rules: object[]) =>
-      api.post('/api/search/smart_filter', {
-        project_id: activeProject?.id,
-        rules,
-        limit: 200,
-      }).then(r => r.data),
+      searchApi.smartFilter(activeProject!.id, rules),
   })
 
   const results: SearchResult[] = mode === 'text'

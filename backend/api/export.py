@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models.asset import Asset, ReviewState
 from models.export import ExportJob
@@ -28,6 +29,7 @@ class LoRAExportRequest(BaseModel):
     caption_style: str = "active"
     include_only_captioned: bool = True
     include_only_approved: bool = False
+    asset_ids: list[str] | None = None
     min_score: float | None = None
     max_images: int | None = None
     image_format: str = "png"
@@ -48,6 +50,7 @@ class KohyaExportRequest(BaseModel):
     caption_style: str = "active"
     include_only_captioned: bool = True
     include_only_approved: bool = False
+    asset_ids: list[str] | None = None
     generate_train_script: bool = True
     create_zip: bool = True
 
@@ -131,7 +134,9 @@ async def _create_and_queue_export(
         status="pending",
     )
     db.add(export_job)
-    await db.flush()
+    # Commit immediately so the worker can find the row even if it starts
+    # before the request's get_db() teardown commit runs.
+    await db.commit()
 
     output_dir = tempfile.mkdtemp(prefix=f"draco_export_{export_job.id[:8]}_")
     export_job_id = export_job.id
@@ -193,6 +198,10 @@ async def _create_and_queue_export(
 
     queue = get_job_queue()
     job_id = await queue.submit(_run_export, job_type=f"export_{export_format}")
+    export_job.export_options = {
+        **(export_job.export_options or {}),
+        "_queue_job_id": job_id,
+    }
     export_job.status = "running"
     await db.commit()
 
@@ -201,6 +210,41 @@ async def _create_and_queue_export(
         "job_id": job_id,
         "asset_count": len(assets),
     }
+
+
+async def recover_stale_export_jobs(db: AsyncSession) -> int:
+    """Mark export jobs left pending/running across restarts as failed."""
+    result = await db.execute(
+        select(ExportJob).where(ExportJob.status.in_(("pending", "running")))
+    )
+    jobs = result.scalars().all()
+    recovered = 0
+    for job in jobs:
+        job.status = "failed"
+        job.error_message = "Export interrupted by application restart"
+        job.finished_at = datetime.now(timezone.utc)
+        recovered += 1
+    if recovered:
+        await db.commit()
+    return recovered
+
+
+def _is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_managed_export_output(path: Path) -> bool:
+    resolved = path.resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    if _is_relative_to(resolved, temp_root):
+        return any(part.startswith("draco_export_") for part in resolved.parts)
+
+    storage_root = settings.storage_path.resolve()
+    return _is_relative_to(resolved, storage_root)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -221,9 +265,20 @@ async def export_lora(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    if not body.create_zip:
+        raise HTTPException(
+            status_code=422,
+            detail="Directory-only LoRA exports are not supported by the current download flow. Enable ZIP archive creation.",
+        )
+
+    image_format = body.image_format.lower()
+    if image_format not in {"png", "jpg", "jpeg", "webp", "original"}:
+        raise HTTPException(status_code=422, detail=f"Unsupported image_format: {body.image_format}")
+
     assets = await _load_eligible_assets(
         project_id,
         db,
+        asset_ids=body.asset_ids,
         include_only_captioned=body.include_only_captioned,
         include_only_approved=body.include_only_approved,
         min_score=body.min_score,
@@ -242,9 +297,10 @@ async def export_lora(
         "caption_style": body.caption_style,
         "include_only_captioned": body.include_only_captioned,
         "include_only_approved": body.include_only_approved,
+        "asset_ids": body.asset_ids,
         "min_score": body.min_score,
         "max_images": body.max_images,
-        "image_format": body.image_format,
+        "image_format": image_format,
         "create_zip": body.create_zip,
         "dataset_name": sanitize_filename(body.dataset_name),
     }
@@ -268,9 +324,16 @@ async def export_kohya(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    if not body.create_zip:
+        raise HTTPException(
+            status_code=422,
+            detail="Directory-only Kohya exports are not supported by the current download flow. Enable ZIP archive creation.",
+        )
+
     assets = await _load_eligible_assets(
         project_id,
         db,
+        asset_ids=body.asset_ids,
         include_only_captioned=body.include_only_captioned,
         include_only_approved=body.include_only_approved,
     )
@@ -292,6 +355,7 @@ async def export_kohya(
         "caption_style": body.caption_style,
         "include_only_captioned": body.include_only_captioned,
         "include_only_approved": body.include_only_approved,
+        "asset_ids": body.asset_ids,
         "generate_train_script": body.generate_train_script,
         "create_zip": body.create_zip,
     }
@@ -345,6 +409,7 @@ async def get_export_job(
         "project_id": job.project_id,
         "export_format": job.export_format,
         "status": job.status,
+        "job_id": (job.export_options or {}).get("_queue_job_id"),
         "progress": job.progress,
         "exported_assets": job.exported_assets,
         "total_assets": job.total_assets,
@@ -353,6 +418,35 @@ async def get_export_job(
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
     }
+
+
+@router.post("/api/export/jobs/{export_job_id}/cancel")
+async def cancel_export_job(
+    export_job_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    from workers.job_queue import get_job_queue
+
+    job = await db.get(ExportJob, export_job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    if job.status in {"done", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail=f"Export job already finished (status: {job.status})")
+
+    queue_job_id = (job.export_options or {}).get("_queue_job_id")
+    if not queue_job_id:
+        raise HTTPException(status_code=409, detail="Export job is missing queue metadata")
+
+    queue = get_job_queue()
+    cancelled = await queue.cancel(queue_job_id)
+    if not cancelled:
+        raise HTTPException(status_code=409, detail="Export job could not be cancelled")
+
+    job.status = "cancelled"
+    job.error_message = "Export cancelled by user"
+    job.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"ok": True, "export_job_id": export_job_id, "job_id": queue_job_id}
 
 
 @router.get("/api/export/jobs/{export_job_id}/download")
@@ -374,6 +468,16 @@ async def download_export(
     output = Path(job.output_path)
     if not output.exists():
         raise HTTPException(status_code=404, detail="Output file not found on disk")
+    if not _is_managed_export_output(output):
+        raise HTTPException(
+            status_code=403,
+            detail="Refusing to serve a file outside Draco-managed export locations",
+        )
+    if not output.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="This export did not produce a downloadable archive. Re-run the export with ZIP archive creation enabled.",
+        )
 
     media_type = "application/zip" if output.suffix == ".zip" else "application/octet-stream"
     return FileResponse(
@@ -390,6 +494,29 @@ async def preview_export(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Return count of assets that would be exported with given filters."""
+    if any(
+        key in body
+        for key in ("asset_ids", "include_only_captioned", "include_only_approved", "min_score", "max_images")
+    ):
+        assets = await _load_eligible_assets(
+            project_id,
+            db,
+            asset_ids=body.get("asset_ids"),
+            include_only_captioned=bool(body.get("include_only_captioned", False)),
+            include_only_approved=bool(body.get("include_only_approved", False)),
+            min_score=body.get("min_score"),
+        )
+        max_images = body.get("max_images")
+        if isinstance(max_images, int) and max_images > 0 and len(assets) > max_images:
+            assets = sorted(assets, key=lambda a: a.composite_score or 0.0, reverse=True)[:max_images]
+
+        captioned = sum(1 for a in assets if a.active_caption_id is not None)
+        return {
+            "count": len(assets),
+            "captioned_count": captioned,
+            "uncaptioned_count": len(assets) - captioned,
+        }
+
     filter_mode = body.get("filter", "approved")
     min_score = body.get("min_score", 0.0)
     include_augmented = body.get("include_augmented", True)

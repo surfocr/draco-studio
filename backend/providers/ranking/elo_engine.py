@@ -21,10 +21,23 @@ class RankingEntry:
 
 
 class EloRankingEngine:
+    """
+    Simple Elo rating system.
+
+    NOTE: Does not inherit from ProviderBase ABC because the ranking
+    service uses this class directly with its sync API. The ProviderBase
+    compliance methods (is_available, health_check) are provided as async
+    classmethods for registry compatibility.
+    """
+
+    provider_id = "elo"
+    display_name = "Elo Rating System"
+    provider_type = "ranking"
+
     K_FACTOR = 32
     DEFAULT_RATING = 1500.0
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
         self._ratings: dict[str, float] = {}
         self._comparisons: dict[str, int] = {}
 
@@ -123,3 +136,16 @@ class EloRankingEngine:
             aid = entry["asset_id"]
             self._ratings[aid] = entry.get("elo", self.DEFAULT_RATING)
             self._comparisons[aid] = entry.get("comparisons", 0)
+
+    # ── ProviderBase-compatible async methods for registry ────────────────────
+
+    async def is_available(self) -> bool:
+        return True
+
+    async def health_check(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "provider": "elo",
+            "latency_ms": 0,
+            "details": {"ratings_count": len(self._ratings)},
+        }

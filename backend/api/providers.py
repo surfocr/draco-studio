@@ -8,7 +8,6 @@ from typing import Annotated
 
 logger = logging.getLogger(__name__)
 
-from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -17,13 +16,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models.provider_config import ProviderConfig
 from providers.registry import get_registry
+from services.provider_config import apply_provider_config_row, build_live_provider_config
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
+_SECRET_CONFIG_KEYS = {"api_key", "token", "access_token", "secret", "client_secret", "password"}
 
 
-def _get_fernet() -> Fernet:
-    """Return a Fernet instance keyed from DRACO_SECRET_KEY env var.
-    Raises RuntimeError if the variable is not set — never falls back to a derived key."""
+def _get_fernet():
+    """Return a Fernet instance keyed from DRACO_SECRET_KEY."""
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError as exc:
+        raise RuntimeError(
+            "The optional 'cryptography' package is not installed, so encrypted API key storage is unavailable. "
+            "Install backend dependencies from backend/requirements-dev.txt to enable API key storage."
+        ) from exc
+
     raw = os.environ.get("DRACO_SECRET_KEY")
     if not raw:
         raise RuntimeError(
@@ -72,6 +80,29 @@ async def list_providers() -> dict:
     }
 
 
+@router.get("/configs")
+async def list_provider_configs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    try:
+        fernet = _get_fernet()
+    except RuntimeError:
+        fernet = None
+
+    result = await db.execute(select(ProviderConfig))
+    rows = result.scalars().all()
+    configs: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        configs.setdefault(row.provider_type, {})[row.provider_name] = {
+            "is_enabled": row.is_enabled,
+            "is_default": row.is_default,
+            "has_api_key": row.api_key_encrypted is not None,
+            "config": dict(row.config or {}),
+            "live_config_keys": sorted(build_live_provider_config(row, fernet=fernet).keys()),
+        }
+    return {"configs": configs}
+
+
 @router.get("/{provider_type}")
 async def list_providers_by_type(provider_type: str) -> dict:
     """List providers for a specific type."""
@@ -87,6 +118,16 @@ async def save_provider_config(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Save non-secret configuration for a provider type."""
+    secret_keys = sorted(key for key in body.config if key.lower() in _SECRET_CONFIG_KEYS)
+    if secret_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Secret values must be saved via /api/providers/api-key, not provider config. "
+                f"Blocked keys: {', '.join(secret_keys)}"
+            ),
+        )
+
     provider_name = body.config.get("provider_name", "default")
     result = await db.execute(
         select(ProviderConfig).where(
@@ -104,7 +145,14 @@ async def save_provider_config(
             config={k: v for k, v in body.config.items() if k != "provider_name"},
         )
         db.add(row)
-    await db.commit()
+    await db.flush()
+
+    try:
+        fernet = _get_fernet()
+    except RuntimeError:
+        fernet = None
+    apply_provider_config_row(row, fernet=fernet)
+
     return {"status": "saved", "provider_type": provider_type, "provider_name": provider_name}
 
 
@@ -114,6 +162,10 @@ async def save_api_key(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Store an API key encrypted in the database. Never returns the key."""
+    api_key = body.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key must not be empty")
+
     try:
         fernet = _get_fernet()
     except RuntimeError as exc:
@@ -121,7 +173,7 @@ async def save_api_key(
             status_code=503,
             detail=str(exc),
         )
-    encrypted = fernet.encrypt(body.api_key.encode()).decode()
+    encrypted = fernet.encrypt(api_key.encode()).decode()
 
     result = await db.execute(
         select(ProviderConfig).where(
@@ -139,13 +191,12 @@ async def save_api_key(
             api_key_encrypted=encrypted,
         )
         db.add(row)
-    await db.commit()
+    await db.flush()
 
     # Immediately inject decrypted key into the live registry so the provider
     # becomes usable without restarting the server.
     try:
-        registry = get_registry()
-        registry.set_config(body.provider_type, body.provider_name, {"api_key": body.api_key})
+        apply_provider_config_row(row, fernet=fernet)
         logger.info(
             "Updated registry config for %s/%s after key save",
             body.provider_type,

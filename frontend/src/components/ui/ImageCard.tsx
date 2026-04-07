@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { clsx } from 'clsx'
 import { Check, X, Flag, AlertTriangle, Copy } from 'lucide-react'
 import type { AssetSummary } from '@/types/api'
@@ -29,10 +29,19 @@ export const ImageCard = React.memo(function ImageCard({
   style,
 }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
+  const [imgSrc, setImgSrc] = useState('')
   const imgRef = useRef<HTMLImageElement>(null)
 
   const thumbUrl = assetsApi.thumbnailUrl(asset.id, 512)
+  const originalUrl = assetsApi.originalUrl(asset.id)
+
+  useEffect(() => {
+    setImgSrc(thumbUrl)
+    setIsLoaded(false)
+    setLoadFailed(false)
+  }, [thumbUrl])
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -68,16 +77,34 @@ export const ImageCard = React.memo(function ImageCard({
       )}
       <img
         ref={imgRef}
-        src={thumbUrl}
+        src={imgSrc}
         alt={asset.filename}
         className={clsx(
           'w-full h-full object-cover transition-opacity',
           isLoaded ? 'opacity-100' : 'opacity-0'
         )}
         loading="lazy"
-        onLoad={() => setIsLoaded(true)}
+        onLoad={() => {
+          setIsLoaded(true)
+          setLoadFailed(false)
+        }}
+        onError={() => {
+          if (imgSrc !== originalUrl) {
+            setIsLoaded(false)
+            setImgSrc(originalUrl)
+            return
+          }
+          setLoadFailed(true)
+        }}
         draggable={false}
       />
+
+      {loadFailed && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 px-3 text-center text-white">
+          <AlertTriangle size={20} className="text-yellow-300" />
+          <p className="text-xs font-medium">Image preview unavailable</p>
+        </div>
+      )}
 
       {/* Selection checkbox */}
       {(isSelected || isHovered) && (

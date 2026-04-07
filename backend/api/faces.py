@@ -162,27 +162,19 @@ async def merge_clusters(
 
 
 @router.post("/projects/{project_id}/faces/cluster")
-async def run_face_clustering(
+async def run_face_clustering_endpoint(
     project_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
-    """Trigger HDBSCAN face clustering for the project. Returns job_id."""
+    """Trigger agglomerative face clustering for the project. Returns job_id."""
     from workers.job_queue import get_job_queue
+    from database import AsyncSessionLocal
 
     async def _cluster() -> dict:
-        from models.asset import Asset
-        from sqlalchemy import select
-        import numpy as np
-
-        result = await db.execute(
-            select(Asset).where(
-                Asset.project_id == project_id,
-                Asset.face_count > 0,
-            )
-        )
-        assets = result.scalars().all()
-        return {"clustered": len(assets), "project_id": project_id}
+        from services.face_clustering import run_face_clustering
+        async with AsyncSessionLocal() as session:
+            return await run_face_clustering(project_id, session)
 
     queue = get_job_queue()
-    job_id = await queue.submit(_cluster)
+    job_id = await queue.submit(_cluster, job_type="face_clustering")
     return {"job_id": job_id}

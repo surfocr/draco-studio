@@ -12,6 +12,7 @@ from database import Base
 
 if TYPE_CHECKING:
     from models.asset import Asset
+    from models.project_runtime_config import ProjectRuntimeConfig
 
 
 def _utcnow() -> datetime:
@@ -48,4 +49,10 @@ class Project(Base):
     # Relationships
     assets: Mapped[list[Asset]] = relationship(
         "Asset", back_populates="project", cascade="all, delete-orphan"
+    )
+    runtime_config: Mapped[ProjectRuntimeConfig | None] = relationship(
+        "ProjectRuntimeConfig",
+        back_populates="project",
+        uselist=False,
+        cascade="all, delete-orphan",
     )

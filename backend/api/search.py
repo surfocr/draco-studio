@@ -38,6 +38,7 @@ class SmartFilterRequest(BaseModel):
     project_id: str
     rules: List[dict]  # e.g. [{"field": "composite_score", "op": "lt", "value": 0.4}]
     limit: int = 200
+    offset: int = 0
 
 
 @router.post("/text")
@@ -193,14 +194,14 @@ async def smart_filter(req: SmartFilterRequest, db: AsyncSession = Depends(get_d
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.limit(req.limit)
+    query = query.offset(req.offset).limit(req.limit)
     result = await db.execute(query)
     assets = result.scalars().all()
     return [
         {
             "id": a.id,
             "filename": a.filename,
-            "thumbnail_url": a.thumbnail_path,
+            "thumbnail_url": _thumbnail_url(a),
             "composite_score": a.composite_score,
             "review_state": a.review_state,
         }

@@ -1,21 +1,38 @@
-"""Real-ESRGAN upscaling image editor provider."""
+"""Real-ESRGAN upscaling provider."""
 from __future__ import annotations
 import time
 from pathlib import Path
-from typing import Optional
-from providers.base import ImageEditor
+from typing import Any, Optional
+from providers.base import ProviderBase
 
-class RealESRGANProvider(ImageEditor):
-    """Real-ESRGAN x4+ upscaling provider (non-destructive)."""
+class RealESRGANProvider(ProviderBase):
+    """Real-ESRGAN x4+ upscaling provider (non-destructive).
+
+    Registered under 'upscaling' type — not ImageEditor, since upscaling
+    doesn't implement flip/rotate/crop operations.
+    """
+
+    provider_id = "realesrgan"
+    display_name = "Real-ESRGAN x4+"
+    provider_type = "upscaling"
+    requires_gpu = True
+    vram_mb = 1500
 
     name = "realesrgan"
     version = "x4plus"
 
-    def __init__(self, scale: int = 4, model_name: str = "RealESRGAN_x4plus"):
+    def __init__(self, scale: int = 4, model_name: str = "RealESRGAN_x4plus", **kwargs):
         self.scale = scale
         self.model_name = model_name
         self._upsampler = None
         self._load_error: Optional[str] = None
+
+    async def is_available(self) -> bool:
+        try:
+            from realesrgan import RealESRGANer  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
     def _load(self):
         if self._upsampler is not None or self._load_error:
@@ -72,13 +89,16 @@ class RealESRGANProvider(ImageEditor):
         except Exception as e:
             raise RuntimeError(f"Upscaling failed: {e}")
 
-    async def health_check(self) -> dict:
+    async def health_check(self) -> dict[str, Any]:
         self._load()
         return {
+            "ok": self._load_error is None,
             "provider": self.name,
             "version": self.version,
-            "model": self.model_name,
-            "scale": self.scale,
-            "available": self._load_error is None,
-            "error": self._load_error,
+            "latency_ms": 0,
+            "details": {
+                "model": self.model_name,
+                "scale": self.scale,
+                "error": self._load_error,
+            },
         }

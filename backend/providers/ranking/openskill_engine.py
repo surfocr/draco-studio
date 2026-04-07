@@ -61,14 +61,34 @@ class OpenSkillRankingEngine:
     """
     TrueSkill-style Bayesian ranking.
     Maintains per-asset Rating(mu, sigma).
+
+    NOTE: Does not inherit from ProviderBase ABC because the ranking
+    service uses this class directly with its sync API. The ProviderBase
+    compliance methods (is_available, health_check) are provided as async
+    classmethods for registry compatibility.
     """
 
-    def __init__(self) -> None:
+    provider_id = "openskill"
+    display_name = "OpenSkill (TrueSkill-style)"
+    provider_type = "ranking"
+
+    def __init__(self, **kwargs) -> None:
         if not _OPENSKILL_AVAILABLE:
             raise ImportError("openskill library not installed. Run: pip install openskill")
         self._model = PlackettLuce()
         self._ratings: dict[str, Rating] = {}
         self._comparisons: dict[str, int] = {}  # asset_id → count
+
+    async def is_available(self) -> bool:
+        return _OPENSKILL_AVAILABLE
+
+    async def health_check(self) -> dict[str, Any]:
+        return {
+            "ok": _OPENSKILL_AVAILABLE,
+            "provider": "openskill",
+            "latency_ms": 0,
+            "details": {"ratings_count": len(self._ratings)},
+        }
 
     def _get_or_create(self, asset_id: str) -> Rating:
         if asset_id not in self._ratings:

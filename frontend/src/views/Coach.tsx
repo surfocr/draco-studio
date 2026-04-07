@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   RefreshCw,
@@ -28,6 +29,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useAssetStore } from '@/stores/useAssetStore'
 import { coachApi, assetsApi } from '@/hooks/useApi'
 import { useToast } from '@/components/providers/ToastProvider'
 import type { CoachIssue, IssueSeverity } from '@/types/api'
@@ -201,7 +203,13 @@ function ThumbnailStrip({ assetIds, maxShow = 8 }: { assetIds: string[]; maxShow
 export default function Coach() {
   const { activeProject } = useProjectStore()
   const queryClient = useQueryClient()
-  const { success, error: toastError } = useToast()
+  const navigate = useNavigate()
+  const { success, info, error: toastError } = useToast()
+  const setSelection = useAssetStore((state) => state.setSelection)
+  const clearFilters = useAssetStore((state) => state.clearFilters)
+  const setSortBy = useAssetStore((state) => state.setSortBy)
+  const setSortDir = useAssetStore((state) => state.setSortDir)
+  const setPage = useAssetStore((state) => state.setPage)
   const [fixingIssueId, setFixingIssueId] = useState<string | null>(null)
 
   const {
@@ -223,6 +231,10 @@ export default function Coach() {
     onSuccess: data => {
       success(`Fixed ${data.affected} assets (${data.action})`)
       queryClient.invalidateQueries({ queryKey: ['coach-report', activeProject?.id] })
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      queryClient.invalidateQueries({ queryKey: ['project-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['export-validation'] })
+      queryClient.invalidateQueries({ queryKey: ['duplicates'] })
       setFixingIssueId(null)
     },
     onError: () => {
@@ -237,6 +249,10 @@ export default function Coach() {
     onSuccess: data => {
       success(`Rejected ${data.affected} assets`)
       queryClient.invalidateQueries({ queryKey: ['coach-report', activeProject?.id] })
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      queryClient.invalidateQueries({ queryKey: ['project-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['export-validation'] })
+      queryClient.invalidateQueries({ queryKey: ['duplicates'] })
     },
     onError: () => toastError('Bulk reject failed'),
   })
@@ -245,6 +261,32 @@ export default function Coach() {
     if (!issue.fix_action || !activeProject) return
     setFixingIssueId(issue.id)
     fixMutation.mutate({ action: issue.fix_action, assetIds: issue.affected_asset_ids })
+  }
+
+  function focusAssetSet(
+    ids: string[],
+    {
+      destination,
+      label,
+      sortDir,
+    }: {
+      destination: '/gallery' | '/export'
+      label: string
+      sortDir: 'asc' | 'desc'
+    }
+  ) {
+    if (ids.length === 0) {
+      info(`No ${label.toLowerCase()} available yet.`)
+      return
+    }
+
+    clearFilters()
+    setSortBy('composite_score')
+    setSortDir(sortDir)
+    setPage(1)
+    setSelection(ids)
+    success(`Selected ${ids.length} ${label.toLowerCase()}.`)
+    navigate(destination)
   }
 
   if (!activeProject) {
@@ -503,18 +545,26 @@ export default function Coach() {
                 Remove these first to improve dataset quality.
               </p>
               <ThumbnailStrip assetIds={report.remove_first} />
-              {report.remove_first.length > 0 && (
+              <div className="mt-3 flex gap-2">
                 <button
-                  onClick={() => bulkRejectMutation.mutate(report.remove_first)}
-                  disabled={bulkRejectMutation.isPending}
-                  className="btn btn-danger btn-sm mt-3 w-full flex items-center justify-center gap-1"
+                  onClick={() => focusAssetSet(report.remove_first, { destination: '/gallery', label: 'Remove Candidates', sortDir: 'asc' })}
+                  className="btn btn-secondary btn-sm flex-1"
                 >
-                  {bulkRejectMutation.isPending
-                    ? <RefreshCw size={12} className="animate-spin" />
-                    : null}
-                  Bulk Reject
+                  Review in Gallery
                 </button>
-              )}
+                {report.remove_first.length > 0 && (
+                  <button
+                    onClick={() => bulkRejectMutation.mutate(report.remove_first)}
+                    disabled={bulkRejectMutation.isPending}
+                    className="btn btn-danger btn-sm flex-1 flex items-center justify-center gap-1"
+                  >
+                    {bulkRejectMutation.isPending
+                      ? <RefreshCw size={12} className="animate-spin" />
+                      : null}
+                    Bulk Reject
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="card p-4">
@@ -523,9 +573,23 @@ export default function Coach() {
                 Best Assets
               </h3>
               <p className="text-xs text-[var(--text-secondary)] mb-2">
-                Prioritize these for training.
+                Prioritize these for training. The preview shows the top of the recommended subset.
               </p>
               <ThumbnailStrip assetIds={report.keep_first} />
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => focusAssetSet(report.recommended_selection, { destination: '/gallery', label: 'Recommended Training Set', sortDir: 'desc' })}
+                  className="btn btn-primary btn-sm flex-1"
+                >
+                  Review Recommended
+                </button>
+                <button
+                  onClick={() => focusAssetSet(report.recommended_selection, { destination: '/export', label: 'Recommended Training Set', sortDir: 'desc' })}
+                  className="btn btn-secondary btn-sm flex-1"
+                >
+                  Export Recommended
+                </button>
+              </div>
             </div>
 
             <div className="card p-4">
@@ -579,6 +643,9 @@ export default function Coach() {
                 <Award size={14} />
                 Training Readiness Summary
               </h3>
+              <p className="text-xs text-[var(--text-secondary)] mb-3">
+                Recommended curated set size: about {report.selection_target_count} images.
+              </p>
               <div className="flex items-center gap-4 mb-3">
                 <span className={`text-4xl font-black ${gradeTextClass(report.training_readiness_grade)}`}>
                   {report.training_readiness_grade}
@@ -594,6 +661,30 @@ export default function Coach() {
               </div>
               <p className="text-sm text-[var(--text-secondary)]">{report.training_readiness_summary}</p>
             </div>
+          </div>
+
+          <div className="card p-4 mt-4">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-1 flex items-center gap-2">
+              <TrendingUp size={14} className="text-blue-400" />
+              Next-Best Additions
+            </h3>
+            <p className="text-xs text-[var(--text-secondary)] mb-2">
+              Use these after the recommended subset if you need a larger training set or want better coverage.
+            </p>
+            <ThumbnailStrip assetIds={report.next_best} />
+            {report.next_best.length === 0 && (
+              <p className="text-xs text-[var(--text-secondary)] italic mt-2">
+                No additional candidates recommended yet.
+              </p>
+            )}
+            {report.next_best.length > 0 && (
+              <button
+                onClick={() => focusAssetSet(report.next_best, { destination: '/gallery', label: 'Next-Best Additions', sortDir: 'desc' })}
+                className="btn btn-secondary btn-sm mt-3 w-full"
+              >
+                Review Next-Best
+              </button>
+            )}
           </div>
         </>
       )}

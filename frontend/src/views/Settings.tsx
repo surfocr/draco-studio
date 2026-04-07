@@ -16,7 +16,7 @@ import {
   Sliders,
   FolderOpen,
 } from 'lucide-react'
-import { projectsApi, providersApi } from '@/hooks/useApi'
+import { adminApi, projectsApi, providersApi } from '@/hooks/useApi'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useToast } from '@/components/providers/ToastProvider'
 
@@ -80,6 +80,185 @@ function StatusDot({ ok, latency }: { ok: boolean | undefined; latency?: number 
 }
 
 // ── Section 1: Provider Health ─────────────────────────────────────────────────
+
+function ProjectRuntimeSection() {
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+  const activeProject = useProjectStore((s) =>
+    s.projects.find((project) => project.id === s.activeProjectId) ?? null
+  )
+  const queryClient = useQueryClient()
+  const { success, error: toastError } = useToast()
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['project-runtime', activeProjectId],
+    queryFn: () => projectsApi.getRuntime(activeProjectId!),
+    enabled: !!activeProjectId,
+    staleTime: 30_000,
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: (
+      patch: Partial<{
+        runtime_mode: 'local' | 'hybrid' | 'hosted'
+        task_provider_overrides: Record<string, string>
+        task_provider_options: Record<string, Record<string, unknown>>
+      }>
+    ) => projectsApi.updateRuntime(activeProjectId!, patch),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-runtime', activeProjectId] })
+      success('Project runtime updated')
+    },
+    onError: (e: Error) => {
+      toastError(e.message || 'Failed to update project runtime')
+    },
+  })
+
+  function saveRuntimeMode(runtimeMode: 'local' | 'hybrid' | 'hosted') {
+    updateMutation.mutate({ runtime_mode: runtimeMode })
+  }
+
+  function saveTaskProvider(taskKey: string, providerName: string) {
+    if (!data) return
+    const nextOverrides = { ...data.task_provider_overrides }
+    if (providerName) nextOverrides[taskKey] = providerName
+    else delete nextOverrides[taskKey]
+    updateMutation.mutate({ task_provider_overrides: nextOverrides })
+  }
+
+  function saveTaskOptions(taskKey: string, patch: Record<string, unknown>) {
+    if (!data) return
+    updateMutation.mutate({
+      task_provider_options: {
+        ...data.task_provider_options,
+        [taskKey]: {
+          ...(data.task_provider_options[taskKey] ?? {}),
+          ...patch,
+        },
+      },
+    })
+  }
+
+  return (
+    <section className="mb-8">
+      <SectionTitle>
+        <Server size={15} />
+        Project Runtime
+      </SectionTitle>
+
+      {!activeProjectId || !activeProject ? (
+        <p className="text-sm text-[var(--text-secondary)]">
+          Select a project to configure task-specific providers and Ollama defaults.
+        </p>
+      ) : isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+          <RefreshCw size={14} className="animate-spin" /> Loading project runtime...
+        </div>
+      ) : data ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase tracking-wide text-[var(--text-secondary)]">
+              Active Project
+            </span>
+            <span className="text-sm text-[var(--text-primary)]">{activeProject.name}</span>
+          </div>
+
+          <div>
+            <label className={labelCls}>Runtime Mode</label>
+            <select
+              value={data.runtime_mode}
+              onChange={(e) => saveRuntimeMode(e.target.value as 'local' | 'hybrid' | 'hosted')}
+              className={inputCls}
+            >
+              <option value="local">Local-only</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="hosted">Hosted / Server</option>
+            </select>
+          </div>
+
+          {data.task_catalog.map((task) => (
+            <div key={task.task_key} className="rounded border border-[var(--border)] p-3 bg-[var(--border)]/10">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">{task.label}</p>
+                  <p className="text-xs text-[var(--text-secondary)]">{task.description}</p>
+                </div>
+                <span className="text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                  {task.provider_type}
+                </span>
+              </div>
+
+              <label className={labelCls}>Provider</label>
+              <select
+                value={data.task_provider_overrides[task.task_key] ?? ''}
+                onChange={(e) => saveTaskProvider(task.task_key, e.target.value)}
+                className={inputCls}
+              >
+                <option value="">Auto ({task.effective_provider ?? 'none'})</option>
+                {task.available_providers.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {provider}
+                  </option>
+                ))}
+              </select>
+
+              {['caption', 'ranking_explanation', 'dataset_coach'].includes(task.task_key) && (
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <div>
+                    <label className={labelCls}>Model</label>
+                    <input
+                      key={`${task.task_key}-model-${String(data.task_provider_options[task.task_key]?.model ?? '')}`}
+                      defaultValue={String(data.task_provider_options[task.task_key]?.model ?? '')}
+                      onBlur={(e) => saveTaskOptions(task.task_key, { model: e.target.value })}
+                      className={inputCls}
+                      placeholder="llava:13b"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Temperature</label>
+                    <input
+                      key={`${task.task_key}-temp-${String(data.task_provider_options[task.task_key]?.temperature ?? '')}`}
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="2"
+                      defaultValue={String(data.task_provider_options[task.task_key]?.temperature ?? 0.1)}
+                      onBlur={(e) => saveTaskOptions(task.task_key, { temperature: Number(e.target.value) })}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Context Length</label>
+                    <input
+                      key={`${task.task_key}-ctx-${String(data.task_provider_options[task.task_key]?.context_length ?? '')}`}
+                      type="number"
+                      min="256"
+                      step="256"
+                      defaultValue={String(data.task_provider_options[task.task_key]?.context_length ?? 4096)}
+                      onBlur={(e) => saveTaskOptions(task.task_key, { context_length: Number(e.target.value) })}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Max Tokens</label>
+                    <input
+                      key={`${task.task_key}-max-${String(data.task_provider_options[task.task_key]?.max_tokens ?? '')}`}
+                      type="number"
+                      min="64"
+                      step="64"
+                      defaultValue={String(data.task_provider_options[task.task_key]?.max_tokens ?? 512)}
+                      onBlur={(e) => saveTaskOptions(task.task_key, { max_tokens: Number(e.target.value) })}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
 
 function ProviderHealthSection() {
   const {
@@ -325,21 +504,48 @@ function ApiKeysSection() {
 // ── Section 4: Editing Providers ───────────────────────────────────────────────
 
 function EditingProvidersSection() {
-  const [comfyEndpoint, setComfyEndpoint] = useSetting(
-    'comfyui_endpoint',
-    'http://localhost:8188'
-  )
-  const [draft, setDraft] = useState(comfyEndpoint)
+  const queryClient = useQueryClient()
+  const { success, error: toastError } = useToast()
   const [testResult, setTestResult] = useState<{ ok: boolean; latency_ms: number } | 'testing' | null>(null)
+  const { data: providerConfigs } = useQuery({
+    queryKey: ['provider-configs'],
+    queryFn: () => providersApi.configs(),
+    staleTime: 30_000,
+  })
+
+  const comfyConfig = providerConfigs?.configs?.editing?.comfyui
+  const [draft, setDraft] = useState('http://localhost:8188')
+
+  React.useEffect(() => {
+    const configured = comfyConfig?.config?.base_url
+    if (typeof configured === 'string' && configured.trim()) {
+      setDraft(configured)
+    }
+  }, [comfyConfig?.config])
 
   async function testConnection() {
-    setComfyEndpoint(draft)
+    if (!draft.trim()) {
+      setTestResult({ ok: false, latency_ms: 0 })
+      toastError('ComfyUI endpoint is required')
+      return
+    }
     setTestResult('testing')
     try {
+      await providersApi.saveConfig('editing', {
+        provider_name: 'comfyui',
+        base_url: draft.trim(),
+      })
+      await queryClient.invalidateQueries({ queryKey: ['provider-configs'] })
       const r = await providersApi.testProvider('editing', 'comfyui')
       setTestResult(r)
+      if (r.ok) {
+        success('ComfyUI endpoint saved and reachable')
+      } else {
+        toastError('ComfyUI endpoint saved, but the provider is not reachable')
+      }
     } catch {
       setTestResult({ ok: false, latency_ms: 0 })
+      toastError('Failed to save or test the ComfyUI endpoint')
     }
   }
 
@@ -495,12 +701,15 @@ function ExportDefaultsSection() {
 function DataManagementSection() {
   const { success, error: toastError } = useToast()
   const [confirmVacuum, setConfirmVacuum] = useState(false)
+  const { data: storageInfo } = useQuery({
+    queryKey: ['storage-info'],
+    queryFn: () => adminApi.storageInfo(),
+    staleTime: 60_000,
+  })
 
   async function handleClearThumbs() {
     try {
-      const r = await fetch('/api/admin/clear-thumbnails', { method: 'POST' })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data = await r.json()
+      const data = await adminApi.clearThumbnails()
       success(`Thumbnail cache cleared (${data.deleted ?? 0} files)`)
     } catch (e) {
       toastError(`Failed to clear thumbnails: ${e instanceof Error ? e.message : 'unknown error'}`)
@@ -510,8 +719,7 @@ function DataManagementSection() {
   async function handleVacuum() {
     if (!confirmVacuum) { setConfirmVacuum(true); return }
     try {
-      const r = await fetch('/api/admin/vacuum', { method: 'POST' })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      await adminApi.vacuum()
       success('Database vacuumed')
       setConfirmVacuum(false)
     } catch (e) {
@@ -532,7 +740,7 @@ function DataManagementSection() {
             Storage Path
           </p>
           <p className="text-sm text-[var(--text-primary)] font-mono bg-[var(--border)]/20 px-3 py-1.5 rounded border border-[var(--border)]">
-            {localStorage.getItem('draco_setting_storage_path') ?? '~/.draco/data'}
+            {storageInfo?.storage_path ?? 'Loading…'}
           </p>
         </div>
 
@@ -663,6 +871,7 @@ export default function Settings() {
         </p>
       </div>
 
+      <ProjectRuntimeSection />
       <ProviderHealthSection />
       <CaptionProvidersSection />
       <ApiKeysSection />

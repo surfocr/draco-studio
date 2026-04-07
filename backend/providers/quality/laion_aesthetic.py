@@ -8,15 +8,28 @@ from providers.base import QualityScorer
 class LAIONAestheticProvider(QualityScorer):
     """LAION Aesthetic Predictor v2 — linear head on CLIP ViT-L/14 embeddings."""
 
+    provider_id = "laion_aesthetic"
+    display_name = "LAION Aesthetic Predictor v2"
+    provider_type = "quality"
+    requires_gpu = True
+    vram_mb = 2000
+
     name = "laion_aesthetic"
     version = "v2"
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._model = None
         self._clip_model = None
         self._clip_preprocess = None
         self._device = None
         self._load_error: Optional[str] = None
+
+    async def is_available(self) -> bool:
+        try:
+            import clip  # noqa: F401
+            return True
+        except ImportError:
+            return False
 
     def _load(self):
         if self._model is not None or self._load_error:
@@ -80,6 +93,19 @@ class LAIONAestheticProvider(QualityScorer):
             return max(0.0, min(1.0, (score_raw - 1.0) / 8.0))
         except Exception:
             return 0.5
+
+    async def score_image(self, image_path: str, face_results=None):
+        """QualityScorer ABC — return a QualityResult with the aesthetic score."""
+        from providers.base import QualityResult
+        aesthetic = await self.score(image_path)
+        return QualityResult(
+            aesthetic=aesthetic,
+            composite_score=aesthetic,
+            training_usefulness=aesthetic,
+            breakdown={"aesthetic": aesthetic},
+            explanations={"aesthetic": f"LAION aesthetic score: {aesthetic:.2f}"},
+            provider=self.name,
+        )
 
     async def score_batch(self, image_paths: list[str]) -> list[float]:
         return [await self.score(p) for p in image_paths]

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api", tags=["ranking"])
 class CreateSessionRequest(BaseModel):
     name: str = "Ranking Session"
     engine: str = "openskill"   # "openskill" | "elo"
-    scope: str = "all"          # "all" | "identity:{id}" | "cluster:{id}" | "filtered"
+    scope: str = "all"          # "all" | "selected" | "custom"
     asset_ids: list[str] = Field(default_factory=list)
     strategy: str = "uncertainty"
 
@@ -36,6 +36,11 @@ class RecordComparisonRequest(BaseModel):
     comparison_time_ms: int | None = None
 
 
+class SkipPairRequest(BaseModel):
+    asset_a_id: str
+    asset_b_id: str
+
+
 class AiCompareRequest(BaseModel):
     asset_id_a: str
     asset_id_b: str
@@ -47,6 +52,10 @@ class SessionResponse(BaseModel):
     project_id: str
     name: str
     ranking_algorithm: str
+    asset_scope: str
+    selection_strategy: str
+    asset_ids_count: int
+    skipped_pairs_count: int
     is_active: bool
     total_comparisons: int
     created_at: str
@@ -103,6 +112,12 @@ async def create_session(
 
     # If no asset_ids provided, fetch all non-rejected assets
     asset_ids = body.asset_ids
+    if body.scope in {"selected", "custom"} and not asset_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="asset_ids are required for selected/custom ranking sessions",
+        )
+
     if not asset_ids:
         result = await db.execute(
             select(Asset.id).where(
@@ -123,6 +138,10 @@ async def create_session(
         project_id=session.project_id,
         name=session.name,
         ranking_algorithm=session.ranking_algorithm,
+        asset_scope=session.asset_scope,
+        selection_strategy=session.selection_strategy,
+        asset_ids_count=len(session.asset_ids or []),
+        skipped_pairs_count=len(session.skipped_pairs or []),
         is_active=session.is_active,
         total_comparisons=session.total_comparisons,
         created_at=session.created_at.isoformat(),
@@ -142,6 +161,10 @@ async def list_sessions(
             project_id=s.project_id,
             name=s.name,
             ranking_algorithm=s.ranking_algorithm,
+            asset_scope=s.asset_scope,
+            selection_strategy=s.selection_strategy,
+            asset_ids_count=len(s.asset_ids or []),
+            skipped_pairs_count=len(s.skipped_pairs or []),
             is_active=s.is_active,
             total_comparisons=s.total_comparisons,
             created_at=s.created_at.isoformat(),
@@ -165,6 +188,10 @@ async def get_session(
         "project_id": session.project_id,
         "name": session.name,
         "ranking_algorithm": session.ranking_algorithm,
+        "asset_scope": session.asset_scope,
+        "selection_strategy": session.selection_strategy,
+        "asset_ids_count": len(session.asset_ids or []),
+        "skipped_pairs_count": len(session.skipped_pairs or []),
         "is_active": session.is_active,
         "total_comparisons": session.total_comparisons,
         "created_at": session.created_at.isoformat(),
@@ -188,7 +215,7 @@ async def get_session(
 async def get_next_pair(
     session_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-    strategy: str = "uncertainty",
+    strategy: str | None = None,
 ) -> dict:
     svc = get_ranking_service()
     try:
@@ -226,6 +253,8 @@ async def record_comparison(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await db.commit()
     return {
         "winner": {
@@ -239,6 +268,46 @@ async def record_comparison(
             "sigma": result.loser_sigma_after,
         },
         "is_draw": result.is_draw,
+    }
+
+
+@router.post("/ranking/sessions/{session_id}/skip")
+async def skip_pair(
+    session_id: str,
+    body: SkipPairRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    svc = get_ranking_service()
+    try:
+        session = await svc.skip_pair(session_id, body.asset_a_id, body.asset_b_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    await db.commit()
+    return {
+        "session_id": session_id,
+        "skipped_pairs_count": len(session.skipped_pairs or []),
+    }
+
+
+@router.post("/ranking/sessions/{session_id}/undo")
+async def undo_last_comparison(
+    session_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    svc = get_ranking_service()
+    try:
+        result = await svc.revert_last_comparison(session_id, db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await db.commit()
+    return {
+        "session_id": result.session_id,
+        "comparison_id": result.reverted_comparison_id,
+        "winner_id": result.winner_id,
+        "loser_id": result.loser_id,
+        "total_comparisons": result.total_comparisons,
     }
 
 
@@ -394,6 +463,7 @@ async def create_session_legacy(
         asset_ids=[],
         db=db,
         name=body.get("name", "Default Session"),
+        strategy=body.get("strategy", "uncertainty"),
     )
     await db.commit()
     return {"id": session.id, "name": session.name}

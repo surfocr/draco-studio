@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +52,9 @@ class Settings(BaseSettings):
     # Set to true only when running behind a trusted reverse proxy or in Docker.
     # When false (default), the server rejects any request not from loopback.
     ALLOW_REMOTE_ACCESS: bool = False
+    # Semicolon-separated list of additional allowed directories for ingest-directory.
+    # User home and DATA_DIR are always allowed.
+    ALLOWED_INGEST_ROOTS: str = ""
 
     # ── Provider API keys (all optional) ─────────────────────────────────────
     GEMINI_API_KEY: Optional[str] = None
@@ -86,6 +90,19 @@ class Settings(BaseSettings):
     QUALITY_WEIGHT_FACE_CENTER: float = 0.10
     QUALITY_WEIGHT_BACKGROUND: float = 0.05
     QUALITY_WEIGHT_RESOLUTION: float = 0.05
+
+    @field_validator("DEBUG", "ALLOW_REMOTE_ACCESS", "LOG_JSON", mode="before")
+    @classmethod
+    def _parse_boolish(cls, value):
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug", "development", "dev"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "production", "prod"}:
+                return False
+        return value
 
     # ── Data dir helper ───────────────────────────────────────────────────────
     @property

@@ -21,6 +21,25 @@ export interface ProjectCreate {
   subject_type?: string
 }
 
+export interface RuntimeTaskCatalogEntry {
+  task_key: string
+  label: string
+  provider_type: string
+  description: string
+  selected_provider: string | null
+  effective_provider: string | null
+  available_providers: string[]
+}
+
+export interface ProjectRuntimeConfig {
+  project_id: string
+  runtime_mode: 'local' | 'hybrid' | 'hosted'
+  task_provider_overrides: Record<string, string>
+  task_provider_options: Record<string, Record<string, unknown>>
+  benchmark_preferences: Record<string, unknown>
+  task_catalog: RuntimeTaskCatalogEntry[]
+}
+
 // ── Assets ────────────────────────────────────────────────────────────────────
 
 export type ReviewState = 'pending' | 'reviewed' | 'approved' | 'rejected' | 'flagged'
@@ -100,6 +119,31 @@ export interface AssetUpdate {
   shot_type?: ShotType
 }
 
+export type DuplicateClusterType = 'exact' | 'phash' | 'embedding' | 'face'
+
+export interface DuplicateImage {
+  id: string
+  filepath: string
+  thumbnail_url: string
+  score: number
+  quality_score?: number | null
+  keep: boolean
+}
+
+export interface DuplicateCluster {
+  id: string
+  cluster_type: DuplicateClusterType
+  image_count: number
+  images: DuplicateImage[]
+  best_id: string
+}
+
+export interface DuplicatesResponse {
+  clusters: DuplicateCluster[]
+  total_clusters: number
+  total_duplicates: number
+}
+
 // ── Captions ──────────────────────────────────────────────────────────────────
 
 export type CaptionStyle = 'natural' | 'concise' | 'danbooru_tags' | 'wd_tags' | 'training_literal'
@@ -155,6 +199,10 @@ export interface RankingSession {
   project_id: string
   name: string
   ranking_algorithm: string
+  asset_scope: string
+  selection_strategy: string
+  asset_ids_count: number
+  skipped_pairs_count: number
   is_active: boolean
   total_comparisons: number
   created_at: string
@@ -364,9 +412,12 @@ export interface CoachReport {
   face_visibility_score: number
   issues: CoachIssue[]
   remove_first: string[]
+  recommended_selection: string[]
   keep_first: string[]
+  next_best: string[]
   missing_coverage: string[]
   improvement_actions: string[]
+  selection_target_count: number
   training_readiness_score: number
   training_readiness_grade: string
   training_readiness_summary: string
@@ -405,7 +456,8 @@ export interface AugmentationResult {
 
 export interface ExportJob {
   id: string
-  status: 'pending' | 'running' | 'done' | 'failed'
+  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
+  job_id?: string | null
   progress: number
   exported_assets: number
   total_assets: number
@@ -420,4 +472,5 @@ export interface ExportValidation {
   asset_count: number
   captioned_count: number
   approved_count: number
+  low_quality_count?: number
 }

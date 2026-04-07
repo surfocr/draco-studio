@@ -68,7 +68,7 @@ class CompositeQualityScorer(QualityScorer):
             },
         }
 
-    # ── Main scoring method ───────────────────────────────────────────────────
+    # ── Main scoring methods ────────────────────────────────────────────────
 
     async def score_image(
         self,
@@ -79,6 +79,13 @@ class CompositeQualityScorer(QualityScorer):
         return await loop.run_in_executor(
             None, self._score_sync, image_path, face_results
         )
+
+    async def score(self, image_path: str) -> float:
+        result = await self.score_image(image_path)
+        return result.composite_score
+
+    async def score_batch(self, image_paths: list) -> list:
+        return [await self.score(p) for p in image_paths]
 
     def _score_sync(
         self,

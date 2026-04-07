@@ -1,0 +1,45 @@
+appId: com.draco.dataset-studio
+productName: Draco Dataset Studio
+copyright: Copyright © 2024-2026 Draco Studio
+
+directories:
+  output: dist
+  buildResources: assets
+
+files:
+  - src/**/*
+  - DRACO_Dataset_Studio_v5.html
+  - DRACO_Dataset_Studio_v4.html
+  - assets/face-api-weights/**/*
+  - package.json
+  - "!**/*.map"
+  - "!**/node_modules/.cache"
+  - "!src/renderer/index.html"
+
+extraResources:
+  - from: python/
+    to: python/
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: assets/icon.ico
+  artifactName: "DracoDatasetStudio-${version}-Setup.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Draco Dataset Studio
+
+portable:
+  artifactName: "DracoDatasetStudio-${version}-Portable.${ext}"
+
+asar: true
+compression: normal

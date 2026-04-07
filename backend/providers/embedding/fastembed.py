@@ -188,13 +188,25 @@ class FastEmbedProvider(EmbeddingProvider):
         if not _QDRANT_AVAILABLE or self._qdrant is None:
             return
 
+        new_id = self._asset_id_to_point_id(asset_id)
+        legacy_id = self._legacy_point_id(asset_id)
+
         point = PointStruct(
-            id=self._asset_id_to_point_id(asset_id),
+            id=new_id,
             vector=vector,
             payload={"asset_id": asset_id, **(payload or {})},
         )
 
         def _upsert() -> None:
+            # Remove legacy integer-format point to avoid duplicates
+            if legacy_id is not None:
+                try:
+                    self._qdrant.delete(
+                        collection_name=settings.QDRANT_COLLECTION,
+                        points_selector=PointIdsList(points=[legacy_id]),
+                    )
+                except Exception:
+                    pass  # legacy point may not exist
             self._qdrant.upsert(
                 collection_name=settings.QDRANT_COLLECTION,
                 points=[point],
@@ -273,11 +285,16 @@ class FastEmbedProvider(EmbeddingProvider):
             return
 
         point_id = self._asset_id_to_point_id(asset_id)
+        legacy_id = self._legacy_point_id(asset_id)
+        # Delete both new UUID-string and old integer point IDs for transition
+        ids_to_delete: list[str | int] = [point_id]
+        if legacy_id is not None:
+            ids_to_delete.append(legacy_id)
 
         def _delete() -> None:
             self._qdrant.delete(
                 collection_name=settings.QDRANT_COLLECTION,
-                points_selector=PointIdsList(points=[point_id]),
+                points_selector=PointIdsList(points=ids_to_delete),
             )
 
         loop = asyncio.get_event_loop()
@@ -321,10 +338,22 @@ class FastEmbedProvider(EmbeddingProvider):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _asset_id_to_point_id(asset_id: str) -> int:
-        """Convert UUID string to integer point ID for Qdrant."""
-        # Qdrant supports UUID strings directly; use as-is if it's a valid UUID
+    def _asset_id_to_point_id(asset_id: str) -> str:
+        """Convert asset ID to Qdrant point ID. Qdrant natively supports UUID strings."""
         try:
-            return uuid.UUID(asset_id).int & 0xFFFFFFFFFFFFFFFF  # 64-bit int
+            return str(uuid.UUID(asset_id))
         except ValueError:
-            return abs(hash(asset_id)) % (2**63)
+            # Non-UUID IDs: generate a deterministic UUID from the string
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, asset_id))
+
+    @staticmethod
+    def _legacy_point_id(asset_id: str) -> int | None:
+        """Compute the old 64-bit integer point ID used before the UUID migration.
+
+        Returns None if the asset_id format would have used hash() which is
+        non-deterministic across Python restarts (so we can't reliably clean it).
+        """
+        try:
+            return uuid.UUID(asset_id).int & 0xFFFFFFFFFFFFFFFF
+        except ValueError:
+            return None

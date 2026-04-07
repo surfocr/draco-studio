@@ -12,10 +12,14 @@ class OpenFaceProvider(HeadPoseProvider, ActionUnitProvider):
     Falls back gracefully if not available.
     """
 
+    provider_id = "openface"
+    display_name = "OpenFace 2.2"
+    provider_type = "head_pose"
+
     name = "openface"
     version = "2.2"
 
-    def __init__(self, executable: str = "FeatureExtraction"):
+    def __init__(self, executable: str = "FeatureExtraction", **kwargs):
         self.executable = executable
         self._available: Optional[bool] = None
 
@@ -23,6 +27,9 @@ class OpenFaceProvider(HeadPoseProvider, ActionUnitProvider):
         if self._available is None:
             self._available = shutil.which(self.executable) is not None
         return self._available
+
+    async def is_available(self) -> bool:
+        return self._check_available()
 
     async def _run_openface(self, image_path: str) -> Optional[Dict[str, Any]]:
         """Run OpenFace on a single image, return parsed CSV result."""
@@ -104,12 +111,39 @@ class OpenFaceProvider(HeadPoseProvider, ActionUnitProvider):
         except Exception as e:
             return {"error": str(e)}
 
+    # ── ABC compliance: HeadPoseProvider ────────────────────────────────────────
+
+    async def estimate_pose(self, image_path: str, face_bbox=None):
+        """HeadPoseProvider ABC method — delegates to estimate_head_pose."""
+        from providers.base import HeadPoseResult
+        result = await self.estimate_head_pose(image_path)
+        if result.get("error") or not result.get("success", False):
+            return None
+        return HeadPoseResult(
+            yaw=result.get("yaw", 0.0),
+            pitch=result.get("pitch", 0.0),
+            roll=result.get("roll", 0.0),
+            provider=self.name,
+        )
+
+    # ── ABC compliance: ActionUnitProvider ────────────────────────────────────
+
+    async def detect_action_units(self, image_path: str, face_bbox=None) -> Dict[str, float]:
+        """ActionUnitProvider ABC method — delegates to extract_action_units."""
+        result = await self.extract_action_units(image_path)
+        if result.get("error"):
+            return {}
+        return result.get("intensities", {})
+
     async def health_check(self) -> dict:
         available = self._check_available()
         return {
+            "ok": available,
             "provider": self.name,
             "version": self.version,
-            "available": available,
-            "executable": self.executable,
-            "error": None if available else f"'{self.executable}' not found on PATH",
+            "latency_ms": 0,
+            "details": {
+                "executable": self.executable,
+                "error": None if available else f"'{self.executable}' not found on PATH",
+            },
         }

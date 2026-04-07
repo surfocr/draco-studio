@@ -8,6 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.asset import Asset
 from models.augmentation import AugmentationJob as AugmentationJobModel
+from services.asset_state import AssetStateService
 
 logger = logging.getLogger(__name__)
 
@@ -208,19 +210,26 @@ class AugmentationService:
         asset_ids: list[str],
         target_width: int,
         target_height: int,
+        project_id: str,
         provider_name: str = "auto",
         prompt: str | None = None,
     ) -> str:
         _asset_ids = list(asset_ids)
         _target_w = target_width
         _target_h = target_height
+        _project_id = project_id
         _provider = provider_name
         _prompt = prompt
 
         async def _run() -> None:
             from database import AsyncSessionLocal
             async with AsyncSessionLocal() as worker_db:
-                for asset_id in _asset_ids:
+                resolved_asset_ids = await self._resolve_auto_fit_asset_ids(
+                    project_id=_project_id,
+                    asset_ids=_asset_ids,
+                    db=worker_db,
+                )
+                for asset_id in resolved_asset_ids:
                     try:
                         await self.outpaint_to_ratio(
                             asset_id, _target_w, _target_h, worker_db, _provider, _prompt
@@ -230,8 +239,22 @@ class AugmentationService:
 
         from workers.job_queue import get_job_queue
         queue = get_job_queue()
-        job_id = await queue.submit(_run)
+        job_id = await queue.submit(_run, job_type="augmentation")
         return job_id
+
+    async def resolve_auto_fit_asset_count(
+        self,
+        project_id: str,
+        asset_ids: list[str],
+        db: AsyncSession,
+    ) -> int:
+        return len(
+            await self._resolve_auto_fit_asset_ids(
+                project_id=project_id,
+                asset_ids=asset_ids,
+                db=db,
+            )
+        )
 
     async def approve_result(self, result_id: str, db: AsyncSession) -> Asset:
         job = await db.get(AugmentationJobModel, result_id)
@@ -243,21 +266,56 @@ class AugmentationService:
         source = await db.get(Asset, job.source_asset_id)
         if not source:
             raise ValueError(f"Source asset {job.source_asset_id} not found")
+        output_path = Path(job.output_path)
+        if not output_path.exists():
+            raise ValueError(f"Output file for result {result_id} not found")
 
-        from pathlib import Path
+        from providers.registry import get_registry
 
         new_asset = Asset(
             id=str(uuid.uuid4()),
             project_id=source.project_id,
-            filename=Path(job.output_path).name,
+            filename=output_path.name,
             filepath=job.output_path,
             is_augmented=True,
             augmentation_source_id=job.source_asset_id,
             composite_score=job.after_score or job.before_score,
         )
+        new_asset.review_state = source.review_state
+        new_asset.is_flagged = source.is_flagged
+        new_asset.is_rejected = False
+
+        storage = get_registry().get("storage", "local")
+        if storage:
+            try:
+                info = await storage.inspect_image(job.output_path)
+                new_asset.width = info.get("width")
+                new_asset.height = info.get("height")
+                new_asset.mime_type = info.get("mime_type")
+                if new_asset.width and new_asset.height:
+                    new_asset.file_size = output_path.stat().st_size
+                if hasattr(storage, "compute_hashes_from_path"):
+                    hashes = await storage.compute_hashes_from_path(job.output_path)
+                    new_asset.sha256_hash = hashes.get("sha256")
+                    new_asset.phash = hashes.get("phash")
+                    new_asset.dhash = hashes.get("dhash")
+                    new_asset.ahash = hashes.get("ahash")
+                if hasattr(storage, "save_thumbnail"):
+                    try:
+                        new_asset.thumbnail_small_path = await storage.save_thumbnail(
+                            job.output_path, new_asset.id, 128
+                        )
+                        new_asset.thumbnail_path = await storage.save_thumbnail(
+                            job.output_path, new_asset.id, 512
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to generate thumbnails for augmentation result %s: %s", result_id, exc)
+            except Exception as exc:
+                logger.warning("Failed to inspect augmentation result %s: %s", result_id, exc)
         db.add(new_asset)
         job.status = "approved"
         await db.flush()
+        await AssetStateService.sync_project_counters(source.project_id, db)
         await db.commit()
         return new_asset
 
@@ -270,13 +328,44 @@ class AugmentationService:
     async def get_result(self, result_id: str, db: AsyncSession) -> AugmentationJobModel | None:
         return await db.get(AugmentationJobModel, result_id)
 
-    async def list_pending_results(self, db: AsyncSession) -> list[AugmentationJobModel]:
+    async def list_pending_results(
+        self,
+        db: AsyncSession,
+        *,
+        project_id: str | None = None,
+    ) -> list[AugmentationJobModel]:
+        stmt = select(AugmentationJobModel).where(
+            AugmentationJobModel.status == "pending_review"
+        )
+        if project_id:
+            stmt = stmt.where(AugmentationJobModel.project_id == project_id)
+        result = await db.execute(stmt.order_by(AugmentationJobModel.created_at.desc()))
+        return list(result.scalars().all())
+
+    async def _resolve_auto_fit_asset_ids(
+        self,
+        *,
+        project_id: str,
+        asset_ids: list[str],
+        db: AsyncSession,
+    ) -> list[str]:
+        if asset_ids:
+            result = await db.execute(
+                select(Asset.id).where(
+                    Asset.project_id == project_id,
+                    Asset.id.in_(asset_ids),
+                    Asset.is_rejected.is_(False),
+                )
+            )
+            return [row[0] for row in result.all()]
+
         result = await db.execute(
-            select(AugmentationJobModel).where(
-                AugmentationJobModel.status == "pending_review"
+            select(Asset.id).where(
+                Asset.project_id == project_id,
+                Asset.is_rejected.is_(False),
             )
         )
-        return list(result.scalars().all())
+        return [row[0] for row in result.all()]
 
     async def _resolve_editing_provider(self, provider_name: str) -> Any:
         from providers.registry import get_registry
@@ -299,7 +388,7 @@ class AugmentationService:
         if basic:
             return basic
 
-        # Last resort: create basic editor directly
-        from providers.editing.basic_editor import BasicImageEditor
-
-        return BasicImageEditor()
+        raise ValueError(
+            "No outpainting provider available — ComfyUI required for outpaint operations. "
+            "BasicImageEditor does not support outpainting."
+        )

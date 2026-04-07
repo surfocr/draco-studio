@@ -15,6 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.runtime_config import resolve_provider_for_task
+
 logger = logging.getLogger(__name__)
 
 _SCORE_PROMPT = """Analyze this image for use in a machine learning training dataset.
@@ -111,24 +115,33 @@ class AIJudgeComparisonResult:
 class AIJudge:
     """Multi-dimensional AI scoring with structured JSON output."""
 
-    def __init__(self, provider_name: str = "auto") -> None:
+    def __init__(
+        self,
+        provider_name: str = "auto",
+        *,
+        project_id: str | None = None,
+        task_key: str = "ranking_explanation",
+    ) -> None:
         self._provider_name = provider_name
+        self._project_id = project_id
+        self._task_key = task_key
 
     async def score_image(
         self,
         image_path: str,
         asset_id: str,
+        db: AsyncSession | None = None,
         existing_analysis: dict[str, Any] | None = None,
     ) -> AIJudgeResult:
         """Score a single image. Falls back to heuristic if AI unavailable."""
-        provider = await self._get_provider()
+        provider, options = await self._get_provider(db)
 
         if provider is None:
             logger.debug("No AI provider available — using heuristic fallback for %s", asset_id)
             return self._fallback_score(asset_id, image_path, existing_analysis or {})
 
         try:
-            response = await self._call_provider(provider, _SCORE_PROMPT, [image_path])
+            response = await self._call_provider(provider, _SCORE_PROMPT, [image_path], options)
             parsed = self._parse_score_response(response)
             return self._build_score_result(asset_id, parsed, provider_name=self._get_provider_id(provider))
         except Exception as exc:
@@ -141,15 +154,21 @@ class AIJudge:
         asset_id_a: str,
         image_path_b: str,
         asset_id_b: str,
+        db: AsyncSession | None = None,
     ) -> AIJudgeComparisonResult:
-        provider = await self._get_provider()
+        provider, options = await self._get_provider(db)
 
         if provider is None:
             # Fallback: call score on each and compare composites
             return self._fallback_compare(asset_id_a, asset_id_b, {}, {})
 
         try:
-            response = await self._call_provider(provider, _COMPARE_PROMPT, [image_path_a, image_path_b])
+            response = await self._call_provider(
+                provider,
+                _COMPARE_PROMPT,
+                [image_path_a, image_path_b],
+                options,
+            )
             parsed = self._parse_compare_response(response)
             return self._build_compare_result(
                 asset_id_a, asset_id_b, parsed,
@@ -159,43 +178,66 @@ class AIJudge:
             logger.warning("AI judge compare failed: %s — using fallback", exc)
             return self._fallback_compare(asset_id_a, asset_id_b, {}, {})
 
-    async def _get_provider(self) -> Any | None:
+    async def _get_provider(self, db: AsyncSession | None = None) -> tuple[Any | None, dict[str, Any]]:
         from providers.registry import get_registry
         registry = get_registry()
+
+        if db is not None and self._project_id:
+            resolved = await resolve_provider_for_task(
+                db,
+                self._project_id,
+                self._task_key,
+                explicit_provider_name=self._provider_name,
+            )
+            return resolved.provider, resolved.options
 
         if self._provider_name != "auto":
             p = registry.get("caption", self._provider_name)
             if p and await p.is_available():
-                return p
-            return None
+                return p, {}
+            return None, {}
 
         # Auto: try gemini first (best vision), then ollama
         for pid in ("gemini", "ollama"):
             p = registry.get("caption", pid)
             if p and await p.is_available():
-                return p
-        return None
+                return p, {}
+        return None, {}
 
     def _get_provider_id(self, provider: Any) -> str:
         return getattr(provider, "provider_id", "unknown")
 
-    async def _call_provider(self, provider: Any, prompt: str, image_paths: list[str]) -> str:
+    async def _call_provider(
+        self,
+        provider: Any,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any],
+    ) -> str:
         """Call a caption provider with a structured prompt and one or more images."""
         pid = self._get_provider_id(provider)
 
         if pid == "gemini":
-            return await self._call_gemini(provider, prompt, image_paths)
+            return await self._call_gemini(provider, prompt, image_paths, options)
         elif pid == "ollama":
-            return await self._call_ollama(provider, prompt, image_paths)
+            return await self._call_ollama(provider, prompt, image_paths, options)
         else:
             # Generic: use first image
-            result = await provider.generate(image_paths[0], "natural", {"prompt": prompt})
+            merged_options = {"prompt": prompt}
+            merged_options.update(options)
+            result = await provider.generate(image_paths[0], "natural", merged_options)
             return result.text
 
-    async def _call_gemini(self, provider: Any, prompt: str, image_paths: list[str]) -> str:
+    async def _call_gemini(
+        self,
+        provider: Any,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any],
+    ) -> str:
         import httpx
         api_key = provider._api_key
-        model = provider._model
+        model = options.get("model", provider._model)
         parts: list[dict] = []
         for path in image_paths:
             with open(path, "rb") as f:
@@ -207,7 +249,10 @@ class AIJudge:
 
         payload = {
             "contents": [{"parts": parts}],
-            "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.1},
+            "generationConfig": {
+                "maxOutputTokens": int(options.get("max_tokens", 1024)),
+                "temperature": float(options.get("temperature", 0.1)),
+            },
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -219,7 +264,13 @@ class AIJudge:
         except (KeyError, IndexError):
             return ""
 
-    async def _call_ollama(self, provider: Any, prompt: str, image_paths: list[str]) -> str:
+    async def _call_ollama(
+        self,
+        provider: Any,
+        prompt: str,
+        image_paths: list[str],
+        options: dict[str, Any],
+    ) -> str:
         import httpx
         images_b64 = []
         for path in image_paths:
@@ -227,13 +278,18 @@ class AIJudge:
                 images_b64.append(base64.b64encode(f.read()).decode())
 
         payload = {
-            "model": provider._model,
+            "model": options.get("model", provider._model),
             "prompt": prompt,
             "images": images_b64,
             "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 1024},
+            "options": {
+                "temperature": float(options.get("temperature", 0.1)),
+                "num_predict": int(options.get("max_tokens", 1024)),
+                "num_ctx": int(options.get("context_length", 4096)),
+            },
         }
-        async with httpx.AsyncClient(timeout=provider._timeout) as client:
+        timeout = options.get("timeout", provider._timeout)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{provider._base_url}/api/generate", json=payload)
             resp.raise_for_status()
             return resp.json().get("response", "").strip()
@@ -403,11 +459,10 @@ class AIJudge:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
-_judge: AIJudge | None = None
-
-
-def get_ai_judge(provider_name: str = "auto") -> AIJudge:
-    global _judge
-    if _judge is None or _judge._provider_name != provider_name:
-        _judge = AIJudge(provider_name)
-    return _judge
+def get_ai_judge(
+    provider_name: str = "auto",
+    *,
+    project_id: str | None = None,
+    task_key: str = "ranking_explanation",
+) -> AIJudge:
+    return AIJudge(provider_name, project_id=project_id, task_key=task_key)

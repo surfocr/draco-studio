@@ -3,8 +3,6 @@ Assets router — CRUD, ingest, thumbnails, streaming originals.
 """
 from __future__ import annotations
 
-import asyncio
-import io
 import logging
 import tempfile
 import uuid
@@ -30,8 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
-from models.asset import Asset, ReviewState, ShotType
-from services.ingest import ingest_directory, ingest_files
+from models.asset import Asset
+from services.asset_state import AssetStateService
+from services.ingest import IngestSource, ingest_directory, ingest_files
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["assets"])
@@ -355,35 +354,67 @@ async def ingest_upload(
     # Save uploaded files to temp dir using unique paths to prevent collision
     # when multiple files share the same basename.
     tmp_dir = tempfile.mkdtemp(prefix="draco_ingest_")
-    file_paths = []
+    pending_images: list[dict[str, str]] = []
+    sidecars: dict[tuple[str, str], str] = {}
     for upload in files:
         original_name = upload.filename or "unknown"
         suffix = Path(original_name).suffix
+        relative_parent = Path(original_name).parent.as_posix()
+        stem = Path(original_name).stem
+        content = await upload.read()
+
+        if suffix.lower() == ".txt":
+            sidecars[(relative_parent, stem)] = content.decode("utf-8", errors="replace").strip()
+            continue
+
         unique_name = f"{uuid.uuid4().hex}{suffix}"
         tmp_path = Path(tmp_dir) / unique_name
-        content = await upload.read()
         tmp_path.write_bytes(content)
-        file_paths.append(str(tmp_path))
+        pending_images.append(
+            {
+                "temp_path": str(tmp_path),
+                "original_name": Path(original_name).name,
+                "parent": relative_parent,
+                "stem": stem,
+            }
+        )
+
+    ingest_inputs = [
+        IngestSource(
+            file_path=item["temp_path"],
+            original_filename=item["original_name"],
+            sidecar_text=sidecars.get((item["parent"], item["stem"])) or None,
+        )
+        for item in pending_images
+    ]
 
     # Submit async ingest job — open a fresh session inside the worker so it is
     # not tied to the request-scoped session that FastAPI closes on 202 return.
     queue = get_job_queue()
     _project_id = project_id
     _queue_analysis = queue_analysis
+    _ingest_inputs = ingest_inputs
+
+    _tmp_dir = tmp_dir  # capture for cleanup in worker
 
     async def _run_ingest() -> dict:
         from database import AsyncSessionLocal
+        import shutil
         results: dict = {"created": [], "errors": [], "duplicates": 0}
-        async with AsyncSessionLocal() as worker_db:
-            async for progress in ingest_files(file_paths, _project_id, worker_db, _queue_analysis):
-                results["created"] = progress.assets_created
-                results["errors"] = progress.errors
-                results["duplicates"] = progress.duplicates_found
-            await worker_db.commit()
+        try:
+            async with AsyncSessionLocal() as worker_db:
+                async for progress in ingest_files(_ingest_inputs, _project_id, worker_db, _queue_analysis):
+                    results["created"] = progress.assets_created
+                    results["errors"] = progress.errors
+                    results["duplicates"] = progress.duplicates_found
+                await worker_db.commit()
+        finally:
+            # Clean up temp files to avoid unbounded disk usage
+            shutil.rmtree(_tmp_dir, ignore_errors=True)
         return results
 
-    job_id = await queue.submit(_run_ingest)
-    return {"job_id": job_id, "file_count": len(file_paths)}
+    job_id = await queue.submit(_run_ingest, job_type="ingest_upload")
+    return {"job_id": job_id, "file_count": len(ingest_inputs)}
 
 
 @router.post(
@@ -399,11 +430,27 @@ async def ingest_dir(
     requested = Path(body.directory_path).resolve()
     if not requested.is_dir():
         raise HTTPException(status_code=400, detail="Directory not found")
-    ingest_root = settings.data_dir
-    if not requested.is_relative_to(ingest_root):
+
+    # Security: restrict to explicitly allowed directories.
+    # Default: only DATA_DIR. Additional roots must be configured via
+    # ALLOWED_INGEST_ROOTS (semicolon-separated) in config or .env.
+    data_root = Path(settings.DATA_DIR).resolve()
+    allowed_roots = [data_root]
+    extra_roots = getattr(settings, "ALLOWED_INGEST_ROOTS", "")
+    if extra_roots:
+        for root in extra_roots.split(";"):
+            root = root.strip()
+            if root:
+                r = Path(root).resolve()
+                if r.is_dir():
+                    allowed_roots.append(r)
+    if not any(
+        requested == root or root in requested.parents
+        for root in allowed_roots
+    ):
         raise HTTPException(
-            status_code=400,
-            detail=f"Directory must be within the data directory ({ingest_root})",
+            status_code=403,
+            detail="Directory is outside allowed ingest roots. Configure ALLOWED_INGEST_ROOTS to add directories.",
         )
 
     from workers.job_queue import get_job_queue
@@ -427,7 +474,7 @@ async def ingest_dir(
             await worker_db.commit()
         return results
 
-    job_id = await queue.submit(_run)
+    job_id = await queue.submit(_run, job_type="ingest_directory")
     return {"job_id": job_id, "directory": body.directory_path}
 
 
@@ -458,19 +505,27 @@ async def update_asset(
     if project_id is not None and asset.project_id != project_id:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    if body.review_state is not None:
-        if body.review_state not in {s.value for s in ReviewState}:
-            raise HTTPException(status_code=400, detail=f"Invalid review_state: {body.review_state}")
-        asset.review_state = body.review_state
-    if body.is_flagged is not None:
-        asset.is_flagged = body.is_flagged
-    if body.is_rejected is not None:
-        asset.is_rejected = body.is_rejected
-    if body.rejection_reason is not None:
-        asset.rejection_reason = body.rejection_reason
+    moderation_changed = any(
+        value is not None
+        for value in (body.review_state, body.is_flagged, body.is_rejected, body.rejection_reason)
+    )
+    if moderation_changed:
+        try:
+            await AssetStateService.apply_review_update(
+                asset,
+                db=db,
+                review_state=body.review_state,
+                is_flagged=body.is_flagged,
+                is_rejected=body.is_rejected,
+                rejection_reason=body.rejection_reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if body.shot_type is not None:
         asset.shot_type = body.shot_type
 
+    if moderation_changed:
+        await AssetStateService.sync_project_counters(asset.project_id, db)
     await db.flush()
     return AssetSummary.model_validate(asset)
 
@@ -485,18 +540,17 @@ async def bulk_delete_assets(
     if not ids:
         raise HTTPException(status_code=400, detail="ids required")
 
-    from providers.registry import get_registry
-    registry = get_registry()
-    storage = registry.get("storage", "local")
-
     deleted = 0
+    touched_projects: set[str] = set()
     for asset_id in ids:
         asset = await db.get(Asset, asset_id)
         if asset:
-            if storage:
-                await storage.delete_asset(asset.filepath, asset_id)
-            await db.delete(asset)
+            touched_projects.add(asset.project_id)
+            await AssetStateService.delete_asset(asset, db)
             deleted += 1
+
+    for project_id in touched_projects:
+        await AssetStateService.sync_project_counters(project_id, db)
 
     await db.commit()
     return {"deleted": deleted}
@@ -514,13 +568,9 @@ async def delete_asset(
     if project_id is not None and asset.project_id != project_id:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    from providers.registry import get_registry
-    registry = get_registry()
-    storage = registry.get("storage", "local")
-    if storage:
-        await storage.delete_asset(asset.filepath, asset_id)
-
-    await db.delete(asset)
+    project_id_for_sync = asset.project_id
+    await AssetStateService.delete_asset(asset, db)
+    await AssetStateService.sync_project_counters(project_id_for_sync, db)
 
 
 @router.get("/assets/{asset_id}/thumbnail")
@@ -573,8 +623,8 @@ async def explain_asset_score(
 
     try:
         from services.ai_judge import get_ai_judge
-        judge = get_ai_judge()
-        result = await judge.score_image(asset.filepath or "", str(asset.id))
+        judge = get_ai_judge(project_id=asset.project_id, task_key="ranking_explanation")
+        result = await judge.score_image(asset.filepath or "", str(asset.id), db=db)
         return {
             "composite": result.composite,
             "dimensions": [
@@ -638,22 +688,22 @@ async def bulk_action(
             continue
 
         if action == "approve":
-            asset.review_state = ReviewState.APPROVED.value
-            asset.is_rejected = False
+            await AssetStateService.approve_asset(asset, db)
         elif action == "reject":
-            asset.review_state = ReviewState.REJECTED.value
-            asset.is_rejected = True
+            await AssetStateService.reject_asset(asset, db)
         elif action == "flag":
-            asset.is_flagged = True
+            await AssetStateService.flag_asset(asset, db)
         elif action == "unflag":
-            asset.is_flagged = False
+            await AssetStateService.unflag_asset(asset, db)
         elif action == "delete":
-            await db.delete(asset)
+            await AssetStateService.delete_asset(asset, db)
         elif action == "reanalyze":
             from workers.tasks import queue_analysis_task
             await queue_analysis_task(asset_id)
 
         affected += 1
 
+    if action != "reanalyze" and affected > 0:
+        await AssetStateService.sync_project_counters(project_id, db)
     await db.flush()
     return {"affected": affected, "action": action}

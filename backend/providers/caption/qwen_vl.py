@@ -11,9 +11,9 @@ Primary use: deep reasoning captions, complex scene understanding, detailed attr
 from __future__ import annotations
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
-from providers.base import CaptionProvider, CaptionResult, CaptionStyle
+from providers.base import CaptionProvider, CaptionResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,8 @@ STYLE_MESSAGES: dict[str, str] = {
 class QwenVLProvider(CaptionProvider):
     """Qwen2.5-VL caption provider."""
 
+    provider_id = "qwen_vl"
+    display_name = "Qwen 2.5 VL (Local)"
     name = "qwen_vl"
     version = "2.5"
 
@@ -71,6 +73,18 @@ class QwenVLProvider(CaptionProvider):
             return True
         except (ImportError, Exception):
             return False
+
+    async def health_check(self) -> dict[str, Any]:
+        return {
+            "ok": await self.is_available(),
+            "latency_ms": 0,
+            "details": {
+                "model": self.model_id,
+                "loaded": self._loaded,
+                "device": self._device or self._requested_device or "unloaded",
+                "error": self._load_error,
+            },
+        }
 
     def _resolve_device(self) -> str:
         if self._requested_device:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -26,6 +26,11 @@ class RankingSession(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="Default Session")
     ranking_algorithm: Mapped[str] = mapped_column(String(32), default="openskill")
     # "openskill" / "elo"
+    asset_scope: Mapped[str] = mapped_column(String(32), default="all")
+    selection_strategy: Mapped[str] = mapped_column(String(32), default="uncertainty")
+    asset_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    initial_asset_ratings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    skipped_pairs: Mapped[list[list[str]] | None] = mapped_column(JSON, nullable=True)
 
     # Session state
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -70,11 +75,16 @@ class RankingComparison(Base):
         String(36), ForeignKey("assets.id"), nullable=False
     )
 
-    # Skill change
+    # Skill change — mu
     winner_mu_before: Mapped[float | None] = mapped_column(Float, nullable=True)
     winner_mu_after: Mapped[float | None] = mapped_column(Float, nullable=True)
     loser_mu_before: Mapped[float | None] = mapped_column(Float, nullable=True)
     loser_mu_after: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Skill change — sigma + elo (for clean undo)
+    winner_sigma_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    loser_sigma_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    winner_elo_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    loser_elo_before: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # AI judge output
     ai_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -83,6 +93,7 @@ class RankingComparison(Base):
     # asset_id of the AI's preferred image (may differ from human choice)
 
     # Source: "human" or "ai"
+    is_draw: Mapped[bool] = mapped_column(Boolean, default=False)
     decided_by: Mapped[str] = mapped_column(String(8), default="human")
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

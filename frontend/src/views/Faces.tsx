@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Users, Edit2, Merge, X } from 'lucide-react'
+import { Users, Edit2, Merge, RefreshCw, X } from 'lucide-react'
 import { useProjectStore } from '@/stores/useProjectStore'
-import api from '@/hooks/useApi'
+import { useJobStore } from '@/stores/useJobStore'
+import { facesApi } from '@/hooks/useApi'
+import { useToast } from '@/components/providers/ToastProvider'
 
 interface FaceCluster {
   id: string
@@ -21,7 +23,9 @@ interface Asset {
 
 export function Faces() {
   const activeProject = useProjectStore((s) => s.activeProject)
+  const addJob = useJobStore((s) => s.addJob)
   const queryClient = useQueryClient()
+  const toast = useToast()
   const [selectedCluster, setSelectedCluster] = useState<FaceCluster | null>(null)
   const [mergeMode, setMergeMode] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<string | null>(null)
@@ -31,21 +35,19 @@ export function Faces() {
 
   const { data: clusters = [], isLoading } = useQuery({
     queryKey: ['face-clusters', activeProject?.id],
-    queryFn: () =>
-      api.get(`/api/faces/clusters?project_id=${activeProject?.id}`).then(r => r.data),
+    queryFn: () => facesApi.listClusters(activeProject!.id),
     enabled: !!activeProject,
   })
 
   const { data: clusterAssets = [] } = useQuery({
     queryKey: ['cluster-assets', selectedCluster?.id],
-    queryFn: () =>
-      api.get(`/api/faces/clusters/${selectedCluster?.id}/assets`).then(r => r.data),
+    queryFn: () => facesApi.getClusterAssets(selectedCluster!.id),
     enabled: !!selectedCluster,
   })
 
   const renameMutation = useMutation({
     mutationFn: ({ id, label }: { id: string; label: string }) =>
-      api.post(`/api/faces/clusters/${id}/rename`, { label }),
+      facesApi.renameCluster(id, label),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['face-clusters'] })
       setRenamingId(null)
@@ -54,12 +56,34 @@ export function Faces() {
 
   const mergeMutation = useMutation({
     mutationFn: ({ source_id, target_id }: { source_id: string; target_id: string }) =>
-      api.post('/api/faces/clusters/merge', { source_id, target_id }),
+      facesApi.mergeClusters(source_id, target_id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['face-clusters'] })
       setMergeMode(false)
       setMergeTarget(null)
       setSelectedCluster(null)
+    },
+  })
+
+  const clusterMutation = useMutation({
+    mutationFn: () => facesApi.runClustering(activeProject!.id),
+    onSuccess: (result) => {
+      addJob({
+        id: result.job_id,
+        type: 'face_clustering',
+        status: 'pending',
+        progress: 0,
+        message: 'Clustering identities',
+        result: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+      })
+      toast.success('Identity clustering started')
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to start identity clustering')
     },
   })
 
@@ -84,6 +108,18 @@ export function Faces() {
           </h1>
           <span className="text-zinc-400 text-sm">{filtered.length} identities</span>
           <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={() => clusterMutation.mutate()}
+              disabled={clusterMutation.isPending}
+              className="btn btn-secondary btn-sm flex items-center gap-1.5"
+            >
+              {clusterMutation.isPending ? (
+                <RefreshCw size={12} className="animate-spin" />
+              ) : (
+                <Users size={12} />
+              )}
+              Run Clustering
+            </button>
             <label className="text-zinc-400 text-sm">Min faces:</label>
             <input
               type="number"

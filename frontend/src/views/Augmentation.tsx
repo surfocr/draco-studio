@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Play, Check, X, ArrowRight, Wand2, LayoutGrid, Eye } from 'lucide-react'
+import { RefreshCw, Play, Check, X, ArrowRight, Wand2, LayoutGrid } from 'lucide-react'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useAssetStore } from '@/stores/useAssetStore'
 import { augmentationApi, assetsApi } from '@/hooks/useApi'
@@ -116,6 +116,8 @@ function ResultCard({
   onApprove: () => void
   onReject: () => void
 }) {
+  const afterPreviewUrl = augmentationApi.previewUrl(result.id)
+
   const scoreDelta =
     result.before_score != null && result.after_score != null
       ? result.after_score - result.before_score
@@ -155,7 +157,7 @@ function ResultCard({
             AFTER
           </span>
           <img
-            src={`/api/augmentation/preview/${result.id}`}
+            src={afterPreviewUrl}
             alt="after"
             className="w-full aspect-square object-cover bg-[var(--border)]"
             onError={e => {
@@ -211,6 +213,7 @@ function OutpaintTab() {
   const { activeProject } = useProjectStore()
   const { selectedIds } = useAssetStore()
   const { success, error: toastError } = useToast()
+  const queryClient = useQueryClient()
 
   const [selectedRatio, setSelectedRatio] = useState<AspectRatio>('1:1')
   const [customW, setCustomW] = useState(1024)
@@ -236,6 +239,7 @@ function OutpaintTab() {
     },
     onSuccess: data => {
       success(`Started auto-fit for ${data.asset_count} images (job ${data.job_id})`)
+      queryClient.invalidateQueries({ queryKey: ['augmentation-pending', activeProject?.id] })
     },
     onError: () => toastError('Auto-fit failed'),
   })
@@ -360,18 +364,6 @@ function OutpaintTab() {
 
       {/* Actions */}
       <div className="flex gap-3 items-center">
-        <div className="relative group">
-          <button
-            disabled
-            className="btn btn-secondary flex items-center gap-1.5 opacity-50 cursor-not-allowed"
-          >
-            <Eye size={14} /> Preview First
-          </button>
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
-            Coming soon
-          </div>
-        </div>
-
         <button
           onClick={() => runMutation.mutate()}
           disabled={runMutation.isPending || !activeProject}
@@ -387,6 +379,9 @@ function OutpaintTab() {
           <span className="text-xs text-[var(--text-secondary)]">Processing...</span>
         )}
       </div>
+      <p className="text-xs text-[var(--text-secondary)]">
+        Augmentation runs non-destructively. Generated results land in Review Results for approval before they affect your dataset.
+      </p>
     </div>
   )
 }
@@ -417,7 +412,7 @@ function ExpansionPlanTab() {
     },
     onSuccess: () => {
       success('Operation started — check Review Results tab')
-      queryClient.invalidateQueries({ queryKey: ['augmentation-pending'] })
+      queryClient.invalidateQueries({ queryKey: ['augmentation-pending', activeProject?.id] })
       setExecutingId(null)
     },
     onError: () => {
@@ -437,7 +432,7 @@ function ExpansionPlanTab() {
     },
     onSuccess: () => {
       success('All operations started')
-      queryClient.invalidateQueries({ queryKey: ['augmentation-pending'] })
+      queryClient.invalidateQueries({ queryKey: ['augmentation-pending', activeProject?.id] })
     },
     onError: () => toastError('Some operations failed'),
   })
@@ -513,10 +508,12 @@ function ReviewResultsTab() {
   const queryClient = useQueryClient()
   const [focusedIndex, setFocusedIndex] = useState(0)
 
+  const { activeProject } = useProjectStore()
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['augmentation-pending'],
-    queryFn: () => augmentationApi.listPending(),
+    queryKey: ['augmentation-pending', activeProject?.id],
+    queryFn: () => augmentationApi.listPending(activeProject?.id),
     refetchInterval: 10_000,
+    enabled: !!activeProject?.id,
   })
 
   const results = (data?.results ?? []).filter(r => r.status === 'pending_review')
@@ -525,7 +522,9 @@ function ReviewResultsTab() {
     mutationFn: (id: string) => augmentationApi.approveResult(id),
     onSuccess: () => {
       success('Result approved')
-      queryClient.invalidateQueries({ queryKey: ['augmentation-pending'] })
+      queryClient.invalidateQueries({ queryKey: ['augmentation-pending', activeProject?.id] })
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      queryClient.invalidateQueries({ queryKey: ['project-stats'] })
     },
     onError: () => toastError('Approve failed'),
   })
@@ -534,7 +533,9 @@ function ReviewResultsTab() {
     mutationFn: (id: string) => augmentationApi.rejectResult(id),
     onSuccess: () => {
       success('Result rejected')
-      queryClient.invalidateQueries({ queryKey: ['augmentation-pending'] })
+      queryClient.invalidateQueries({ queryKey: ['augmentation-pending', activeProject?.id] })
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      queryClient.invalidateQueries({ queryKey: ['project-stats'] })
     },
     onError: () => toastError('Reject failed'),
   })

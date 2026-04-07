@@ -1,18 +1,17 @@
-import React, { useCallback, useEffect, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Filter,
+  Check,
+  CheckSquare,
+  ChevronLeft,
+  ChevronRight,
+  Flag,
+  RefreshCw,
   SortAsc,
   SortDesc,
-  ZoomIn,
-  ZoomOut,
-  CheckSquare,
   Square,
   Upload,
-  RefreshCw,
-  Trash2,
-  Flag,
-  Check,
   X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -20,11 +19,12 @@ import { assetsApi } from '@/hooks/useApi'
 import { useAssetStore } from '@/stores/useAssetStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useJobStore } from '@/stores/useJobStore'
-import { VirtualGrid } from '@/components/ui/VirtualGrid'
 import { DropZone } from '@/components/ui/DropZone'
-import { Score } from '@/components/ui/Score'
-import type { ReviewState, ShotType } from '@/types/api'
+import { VirtualGrid } from '@/components/ui/VirtualGrid'
+import { AssetDetailPanel } from '@/components/ui/AssetDetailPanel'
 import { useToast } from '@/components/providers/ToastProvider'
+import type { ReviewState, ShotType } from '@/types/api'
+import type { ImportFileCandidate } from '@/lib/importFiles'
 
 const SORT_OPTIONS = [
   { value: 'composite_score', label: 'Score' },
@@ -34,7 +34,7 @@ const SORT_OPTIONS = [
   { value: 'imported_at', label: 'Import Date' },
   { value: 'filename', label: 'Filename' },
   { value: 'trueskill_mu', label: 'Rank' },
-]
+] as const
 
 const REVIEW_STATES: Array<{ value: ReviewState | ''; label: string }> = [
   { value: '', label: 'All States' },
@@ -57,8 +57,8 @@ const SHOT_TYPES: Array<{ value: ShotType | ''; label: string }> = [
 export function Gallery() {
   const queryClient = useQueryClient()
   const toast = useToast()
-  const activeProject = useProjectStore((s) => s.activeProject)
-  const addJob = useJobStore((s) => s.addJob)
+  const activeProject = useProjectStore((state) => state.activeProject)
+  const addJob = useJobStore((state) => state.addJob)
 
   const {
     assets,
@@ -75,7 +75,6 @@ export function Gallery() {
     setAssets,
     setLoading,
     updateAsset,
-    removeAsset,
     toggleSelect,
     selectAll,
     clearSelection,
@@ -87,7 +86,6 @@ export function Gallery() {
     setPage,
   } = useAssetStore()
 
-  // Fetch assets
   const { data, isFetching, refetch } = useQuery({
     queryKey: ['assets', activeProject?.id, page, pageSize, sortBy, sortDir, filters],
     queryFn: () =>
@@ -99,20 +97,17 @@ export function Gallery() {
         ...filters,
       }),
     enabled: !!activeProject?.id,
-    placeholderData: (prev) => prev,
+    placeholderData: (previous) => previous,
   })
 
   useEffect(() => {
-    if (data) {
-      setAssets(data.items, data.total, data.has_next)
-    }
+    if (data) setAssets(data.items, data.total, data.has_next)
   }, [data, setAssets])
 
   useEffect(() => {
     setLoading(isFetching)
   }, [isFetching, setLoading])
 
-  // Mutations
   const updateMutation = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Parameters<typeof assetsApi.update>[1] }) =>
       assetsApi.update(id, patch),
@@ -120,25 +115,49 @@ export function Gallery() {
       updateAsset(updated.id, updated)
       queryClient.invalidateQueries({ queryKey: ['assets'] })
     },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to update asset')
+    },
   })
 
   const ingestMutation = useMutation({
-    mutationFn: (files: File[]) => assetsApi.ingestUpload(activeProject!.id, files),
+    mutationFn: (files: ImportFileCandidate[]) => assetsApi.ingestUpload(activeProject!.id, files),
     onSuccess: (result) => {
-      toast.success(`Importing ${result.file_count} files…`)
-      // Poll for job completion
-      setTimeout(() => refetch(), 2000)
+      addJob({
+        id: result.job_id,
+        type: 'ingest_upload',
+        status: 'pending',
+        progress: 0,
+        message: `Importing ${result.file_count} files`,
+        result: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+      })
+      toast.success(`Import started for ${result.file_count} files`)
     },
-    onError: () => toast.error('Failed to start import'),
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to start import')
+    },
   })
 
   const bulkMutation = useMutation({
     mutationFn: ({ action, ids }: { action: string; ids: string[] }) =>
       assetsApi.bulkAction(activeProject!.id, action, ids),
     onSuccess: (result) => {
-      toast.success(`${result.affected} assets ${result.action}d`)
+      const pastTense =
+        result.action === 'reject'
+          ? 'rejected'
+          : result.action === 'flag'
+          ? 'flagged'
+          : `${result.action}d`
+      toast.success(`${result.affected} assets ${pastTense}`)
       clearSelection()
       refetch()
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Bulk action failed')
     },
   })
 
@@ -146,56 +165,72 @@ export function Gallery() {
     (id: string) => updateMutation.mutate({ id, patch: { review_state: 'approved' } }),
     [updateMutation]
   )
+
   const handleReject = useCallback(
     (id: string) => updateMutation.mutate({ id, patch: { is_rejected: true, review_state: 'rejected' } }),
     [updateMutation]
   )
+
   const handleFlag = useCallback(
     (id: string) => updateMutation.mutate({ id, patch: { is_flagged: true } }),
     [updateMutation]
   )
+
+  const [detailAssetId, setDetailAssetId] = useState<string | null>(null)
 
   const handleSelect = useCallback(
     (id: string, multi: boolean, _range: boolean) => {
       if (multi) {
         toggleSelect(id)
       } else {
-        // Single select — just toggle
-        toggleSelect(id)
+        // Single click: open detail panel
+        setDetailAssetId((prev) => (prev === id ? null : id))
       }
     },
     [toggleSelect]
   )
 
+  const detailIndex = detailAssetId ? assets.findIndex((a) => a.id === detailAssetId) : -1
+
+  const handleDetailPrev = useCallback(() => {
+    if (detailIndex > 0) setDetailAssetId(assets[detailIndex - 1].id)
+  }, [detailIndex, assets])
+
+  const handleDetailNext = useCallback(() => {
+    if (detailIndex >= 0 && detailIndex < assets.length - 1) setDetailAssetId(assets[detailIndex + 1].id)
+  }, [detailIndex, assets])
+
   const selectedCount = selectedIds.size
+  const allSelected = assets.length > 0 && selectedCount === assets.length
 
   if (!activeProject) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-text-secondary">
-        <div className="text-6xl opacity-20">📁</div>
-        <p className="text-lg font-medium text-text-primary">No project selected</p>
-        <p className="text-sm">Create or select a project to get started</p>
+      <div className="flex h-full flex-col items-center justify-center gap-4 text-text-secondary">
+        <div className="text-center">
+          <p className="text-lg font-medium text-text-primary">No project selected</p>
+          <p className="mt-1 text-sm">Create a project in Settings, then import images to begin curation.</p>
+        </div>
+        <Link to="/settings" className="btn btn-primary btn-sm">
+          Create Project
+        </Link>
       </div>
     )
   }
 
   return (
-    <DropZone
-      onFiles={(files) => ingestMutation.mutate(files)}
-      className="flex flex-col h-full"
-    >
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface shrink-0 flex-wrap">
-        {/* Sort */}
+    <DropZone onFiles={(files) => ingestMutation.mutate(files)} className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
         <div className="flex items-center gap-1">
           <select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-            className="text-xs py-1 px-2 w-auto"
+            onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
+            className="w-auto px-2 py-1 text-xs"
             style={{ width: 'auto' }}
           >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
           <button
@@ -207,87 +242,84 @@ export function Gallery() {
           </button>
         </div>
 
-        <div className="w-px h-5 bg-border" />
+        <div className="h-5 w-px bg-border" />
 
-        {/* Filters */}
         <select
           value={filters.review_state ?? ''}
-          onChange={(e) => setFilter('review_state', (e.target.value as ReviewState) || undefined)}
-          className="text-xs py-1 px-2"
+          onChange={(event) => setFilter('review_state', (event.target.value as ReviewState) || undefined)}
+          className="px-2 py-1 text-xs"
           style={{ width: 'auto' }}
         >
-          {REVIEW_STATES.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+          {REVIEW_STATES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
           ))}
         </select>
 
         <select
           value={filters.shot_type ?? ''}
-          onChange={(e) => setFilter('shot_type', (e.target.value as ShotType) || undefined)}
-          className="text-xs py-1 px-2"
+          onChange={(event) => setFilter('shot_type', (event.target.value as ShotType) || undefined)}
+          className="px-2 py-1 text-xs"
           style={{ width: 'auto' }}
         >
-          {SHOT_TYPES.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
+          {SHOT_TYPES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
           ))}
         </select>
 
         {Object.keys(filters).length > 0 && (
-          <button className="btn btn-sm btn-ghost text-text-secondary" onClick={clearFilters}>
-            <X size={12} /> Clear
+          <button className="btn btn-ghost btn-sm text-text-secondary" onClick={clearFilters}>
+            <X size={12} />
+            Clear
           </button>
         )}
 
         <div className="flex-1" />
 
-        {/* Stats */}
         <span className="text-xs text-text-secondary">
           {total.toLocaleString()} images
-          {selectedCount > 0 && ` · ${selectedCount} selected`}
+          {selectedCount > 0 && ` - ${selectedCount} selected`}
         </span>
 
-        {/* Zoom */}
-        <div className="flex items-center gap-1 border border-border rounded-md overflow-hidden">
-          {([0, 1, 2] as const).map((z) => (
+        <div className="overflow-hidden rounded-md border border-border">
+          {([0, 1, 2] as const).map((value) => (
             <button
-              key={z}
+              key={value}
+              onClick={() => setZoom(value)}
               className={clsx(
                 'px-2 py-1 text-xs transition-colors',
-                zoom === z
+                zoom === value
                   ? 'bg-accent text-white'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-surface-elevated'
+                  : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
               )}
-              onClick={() => setZoom(z)}
-              title={['Small', 'Medium', 'Large'][z]}
+              title={['Small', 'Medium', 'Large'][value]}
             >
-              {['S', 'M', 'L'][z]}
+              {['S', 'M', 'L'][value]}
             </button>
           ))}
         </div>
 
-        {/* Select all */}
         <button
           className="btn-ghost btn-icon"
-          onClick={() => selectedCount === assets.length ? clearSelection() : selectAll()}
-          title={selectedCount === assets.length ? 'Deselect all' : 'Select all'}
+          onClick={() => (allSelected ? clearSelection() : selectAll())}
+          title={allSelected ? 'Deselect all' : 'Select all'}
         >
-          {selectedCount === assets.length ? (
-            <CheckSquare size={15} className="text-accent" />
-          ) : (
-            <Square size={15} />
-          )}
+          {allSelected ? <CheckSquare size={15} className="text-accent" /> : <Square size={15} />}
         </button>
 
-        {/* Upload */}
-        <label
-          htmlFor="file-input-hidden"
-          className="btn btn-primary btn-sm cursor-pointer"
-        >
+        <label htmlFor="file-input-hidden" className="btn btn-primary btn-sm cursor-pointer">
           <Upload size={13} />
           Import
         </label>
 
-        {/* Refresh */}
+        <label htmlFor="folder-input-hidden" className="btn btn-secondary btn-sm cursor-pointer">
+          <Upload size={13} />
+          Import Folder
+        </label>
+
         <button
           className={clsx('btn-ghost btn-icon', isFetching && 'animate-spin')}
           onClick={() => refetch()}
@@ -297,57 +329,102 @@ export function Gallery() {
         </button>
       </div>
 
-      {/* Bulk action bar */}
       {selectedCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-accent/10 border-b border-accent/20 text-sm shrink-0">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-accent/20 bg-accent/10 px-3 py-2 text-sm">
           <span className="font-medium text-accent">{selectedCount} selected</span>
           <div className="flex-1" />
           <button
             className="btn btn-sm"
-            style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--success)', border: '1px solid rgba(34,197,94,0.3)' }}
+            style={{
+              background: 'rgba(34,197,94,0.15)',
+              color: 'var(--success)',
+              border: '1px solid rgba(34,197,94,0.3)',
+            }}
             onClick={() => bulkMutation.mutate({ action: 'approve', ids: [...selectedIds] })}
           >
-            <Check size={12} /> Approve
+            <Check size={12} />
+            Approve
           </button>
           <button
             className="btn btn-sm"
-            style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--warning)', border: '1px solid rgba(245,158,11,0.3)' }}
+            style={{
+              background: 'rgba(245,158,11,0.15)',
+              color: 'var(--warning)',
+              border: '1px solid rgba(245,158,11,0.3)',
+            }}
             onClick={() => bulkMutation.mutate({ action: 'flag', ids: [...selectedIds] })}
           >
-            <Flag size={12} /> Flag
+            <Flag size={12} />
+            Flag
           </button>
-          <button
-            className="btn btn-sm btn-danger"
-            onClick={() => bulkMutation.mutate({ action: 'reject', ids: [...selectedIds] })}
-          >
-            <X size={12} /> Reject
+          <button className="btn btn-danger btn-sm" onClick={() => bulkMutation.mutate({ action: 'reject', ids: [...selectedIds] })}>
+            <X size={12} />
+            Reject
           </button>
-          <button className="btn-ghost btn-sm btn" onClick={clearSelection}>
-            <X size={12} /> Deselect
+          <button className="btn btn-ghost btn-sm" onClick={clearSelection}>
+            <X size={12} />
+            Deselect
           </button>
         </div>
       )}
 
-      {/* Loading indicator */}
-      {isLoading && assets.length === 0 && (
-        <div className="flex items-center justify-center flex-1 gap-2 text-text-secondary">
+      {isLoading && assets.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center gap-2 text-text-secondary">
           <RefreshCw size={20} className="animate-spin" />
-          <span>Loading…</span>
+          <span>Loading...</span>
+        </div>
+      ) : (
+        <div className="flex flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden">
+            <VirtualGrid
+              assets={assets}
+              selectedIds={selectedIds}
+              zoom={zoom}
+              onSelect={handleSelect}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onFlag={handleFlag}
+            />
+          </div>
+          {detailAssetId && (
+            <AssetDetailPanel
+              assetId={detailAssetId}
+              onClose={() => setDetailAssetId(null)}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onFlag={handleFlag}
+              onPrev={handleDetailPrev}
+              onNext={handleDetailNext}
+              hasPrev={detailIndex > 0}
+              hasNext={detailIndex < assets.length - 1}
+            />
+          )}
         </div>
       )}
 
-      {/* Grid */}
-      <div className="flex-1 overflow-hidden">
-        <VirtualGrid
-          assets={assets}
-          selectedIds={selectedIds}
-          zoom={zoom}
-          onSelect={handleSelect}
-          onApprove={handleApprove}
-          onReject={handleReject}
-          onFlag={handleFlag}
-        />
-      </div>
+      {total > pageSize && (
+        <div className="flex flex-shrink-0 items-center justify-center gap-3 border-t border-border bg-surface px-3 py-2">
+          <button
+            className="btn-ghost btn-icon"
+            disabled={page <= 1}
+            onClick={() => setPage(page - 1)}
+            title="Previous page"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="tabular-nums text-xs text-text-secondary">
+            Page {page} of {Math.ceil(total / pageSize)}
+          </span>
+          <button
+            className="btn-ghost btn-icon"
+            disabled={!hasNext}
+            onClick={() => setPage(page + 1)}
+            title="Next page"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
     </DropZone>
   )
 }

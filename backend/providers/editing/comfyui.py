@@ -288,7 +288,10 @@ class ComfyUIProvider(AIOutpaintingProvider, AIImageEditor):
 
             prompt_id = await self._queue_workflow(workflow)
             result_data = await self._poll_result(prompt_id)
-            output_path = self._extract_output_path(result_data, output_prefix)
+            import asyncio as _aio
+            output_path = await _aio.get_event_loop().run_in_executor(
+                None, self._extract_output_path, result_data, output_prefix
+            )
             latency = int((time.monotonic() - t0) * 1000)
 
             return AIEditResult(
@@ -325,7 +328,10 @@ class ComfyUIProvider(AIOutpaintingProvider, AIImageEditor):
 
             prompt_id = await self._queue_workflow(workflow)
             result_data = await self._poll_result(prompt_id)
-            output_path = self._extract_output_path(result_data, output_prefix)
+            import asyncio as _aio
+            output_path = await _aio.get_event_loop().run_in_executor(
+                None, self._extract_output_path, result_data, output_prefix
+            )
 
             return AIEditResult(
                 success=True,
@@ -364,7 +370,10 @@ class ComfyUIProvider(AIOutpaintingProvider, AIImageEditor):
 
             prompt_id = await self._queue_workflow(workflow)
             result_data = await self._poll_result(prompt_id)
-            output_path = self._extract_output_path(result_data, output_prefix)
+            import asyncio as _aio
+            output_path = await _aio.get_event_loop().run_in_executor(
+                None, self._extract_output_path, result_data, output_prefix
+            )
 
             return AIEditResult(
                 success=True,
@@ -435,10 +444,41 @@ class ComfyUIProvider(AIOutpaintingProvider, AIImageEditor):
         raise TimeoutError(f"ComfyUI timed out waiting for prompt {prompt_id}")
 
     def _extract_output_path(self, result_data: dict[str, Any], prefix: str) -> str:
+        """Extract the output filename and download it to managed storage.
+
+        ComfyUI stores output images in its own output/ directory. We download
+        the file via the /view API and save it locally so downstream code can
+        access it by a real filesystem path.
+        """
+        from config import settings
+
         outputs = result_data.get("outputs", {})
         for node_id, node_output in outputs.items():
             images = node_output.get("images", [])
             for img in images:
-                if img.get("filename", "").startswith(prefix):
-                    return img.get("filename", "")
+                filename = img.get("filename", "")
+                if filename.startswith(prefix):
+                    subfolder = img.get("subfolder", "")
+                    # Build the managed storage path
+                    managed_dir = Path(settings.STORAGE_PATH) / "comfyui_output"
+                    managed_dir.mkdir(parents=True, exist_ok=True)
+                    local_path = managed_dir / filename
+                    # Download via ComfyUI /view endpoint with timeout.
+                    # Note: this is sync but called from async context — callers
+                    # should wrap in run_in_executor for production use.
+                    try:
+                        import urllib.request
+                        params = f"filename={filename}"
+                        if subfolder:
+                            params += f"&subfolder={subfolder}"
+                        params += "&type=output"
+                        url = f"{self.base_url}/view?{params}"
+                        urllib.request.urlretrieve(url, str(local_path))
+                        return str(local_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not download ComfyUI output %s: %s", filename, exc
+                        )
+                        # Fall back to filename only (degraded)
+                        return filename
         return ""

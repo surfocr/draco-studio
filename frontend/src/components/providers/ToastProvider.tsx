@@ -1,6 +1,6 @@
-import React, { createContext, useCallback, useContext, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { clsx } from 'clsx'
-import { X, CheckCircle, AlertCircle, Info } from 'lucide-react'
+import { X, CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-react'
 
 type ToastType = 'success' | 'error' | 'info' | 'warning'
 
@@ -15,31 +15,62 @@ interface ToastContextValue {
   success: (message: string) => void
   error: (message: string) => void
   info: (message: string) => void
+  warning: (message: string) => void
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null)
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
+  const activeKeysRef = useRef(new Set<string>())
+  const timeoutIdsRef = useRef(new Map<string, number>())
 
   const dismiss = useCallback((id: string) => {
-    setToasts((t) => t.filter((x) => x.id !== id))
+    setToasts((t) => {
+      const target = t.find((x) => x.id === id)
+      if (target) {
+        activeKeysRef.current.delete(`${target.type}:${target.message}`)
+      }
+      return t.filter((x) => x.id !== id)
+    })
+    const timeoutId = timeoutIdsRef.current.get(id)
+    if (timeoutId) {
+      window.clearTimeout(timeoutId)
+      timeoutIdsRef.current.delete(id)
+    }
   }, [])
 
   const toast = useCallback(
     (message: string, type: ToastType = 'info') => {
+      const normalizedMessage = message.trim()
+      if (!normalizedMessage) return
+
+      const dedupeKey = `${type}:${normalizedMessage}`
+      if (activeKeysRef.current.has(dedupeKey)) return
+
       const id = Math.random().toString(36).slice(2)
-      setToasts((t) => [...t, { id, message, type }])
-      setTimeout(() => dismiss(id), 4000)
+      activeKeysRef.current.add(dedupeKey)
+      setToasts((t) => [...t, { id, message: normalizedMessage, type }])
+      const timeoutId = window.setTimeout(() => dismiss(id), 5000)
+      timeoutIdsRef.current.set(id, timeoutId)
     },
     [dismiss]
   )
+
+  useEffect(() => {
+    return () => {
+      timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId))
+      timeoutIdsRef.current.clear()
+      activeKeysRef.current.clear()
+    }
+  }, [])
 
   const ctx: ToastContextValue = {
     toast,
     success: (m) => toast(m, 'success'),
     error: (m) => toast(m, 'error'),
     info: (m) => toast(m, 'info'),
+    warning: (m) => toast(m, 'warning'),
   }
 
   return (
@@ -63,6 +94,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             {t.type === 'success' && <CheckCircle size={16} />}
             {t.type === 'error' && <AlertCircle size={16} />}
             {t.type === 'info' && <Info size={16} />}
+            {t.type === 'warning' && <AlertTriangle size={16} />}
             <span className="flex-1">{t.message}</span>
             <button
               onClick={() => dismiss(t.id)}

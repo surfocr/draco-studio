@@ -8,9 +8,9 @@ Layered duplicate detection service.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -21,6 +21,7 @@ from config import settings
 from models.asset import Asset
 from providers.base import DuplicateCluster
 from providers.registry import get_registry
+from services.asset_quality import pick_best_asset
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +53,19 @@ async def find_duplicates(
         return []
 
     clusters: list[DuplicateCluster] = []
+    asset_lookup = {asset.id: asset for asset in assets}
 
     # Track which assets have been assigned to a cluster already
     clustered: set[str] = set()
 
     # ── Stage 1: Exact SHA-256 ────────────────────────────────────────────────
     if "exact" in _stages:
-        exact_clusters = _find_exact_duplicates(assets, clustered)
+        exact_clusters = _find_exact_duplicates(assets, asset_lookup, clustered)
         clusters.extend(exact_clusters)
 
     # ── Stage 2: pHash ────────────────────────────────────────────────────────
     if "phash" in _stages:
-        phash_clusters = _find_phash_duplicates(assets, clustered, _phash_thresh)
+        phash_clusters = _find_phash_duplicates(assets, asset_lookup, clustered, _phash_thresh)
         clusters.extend(phash_clusters)
 
     # ── Stage 3: Embedding cosine similarity ─────────────────────────────────
@@ -78,10 +80,18 @@ async def find_duplicates(
 
     # ── Stage 4: Face embedding ───────────────────────────────────────────────
     if "face" in _stages:
-        face_clusters = _find_face_embedding_duplicates(assets, clustered, _face_thresh)
+        face_clusters = await _find_face_embedding_duplicates(
+            assets, clustered, _face_thresh, project_id
+        )
         clusters.extend(face_clusters)
 
-    # Write cluster_ids back to assets
+    # Clear stale cluster assignments from prior scans before writing new ones.
+    # This ensures assets that are no longer duplicates don't retain old labels.
+    for asset in assets:
+        asset.duplicate_cluster_id = None
+        asset.duplicate_type = None
+
+    # Write new cluster_ids to assets
     for cluster in clusters:
         for asset_id in cluster.asset_ids:
             for asset in assets:
@@ -99,7 +109,7 @@ async def find_duplicates(
 
 
 def _find_exact_duplicates(
-    assets: list[Asset], clustered: set[str]
+    assets: list[Asset], asset_lookup: dict[str, Asset], clustered: set[str]
 ) -> list[DuplicateCluster]:
     """Group assets with identical SHA-256 hashes."""
     hash_groups: dict[str, list[str]] = {}
@@ -117,7 +127,7 @@ def _find_exact_duplicates(
                 cluster_id=cluster_id,
                 cluster_type="exact",
                 asset_ids=group,
-                representative_id=group[0],
+                representative_id=pick_best_asset(group, asset_lookup),
             )
         )
         clustered.update(group)
@@ -127,7 +137,7 @@ def _find_exact_duplicates(
 
 
 def _find_phash_duplicates(
-    assets: list[Asset], clustered: set[str], threshold: int
+    assets: list[Asset], asset_lookup: dict[str, Asset], clustered: set[str], threshold: int
 ) -> list[DuplicateCluster]:
     """Group assets with pHash Hamming distance ≤ threshold."""
     try:
@@ -181,7 +191,7 @@ def _find_phash_duplicates(
                 cluster_id=cluster_id,
                 cluster_type="phash",
                 asset_ids=group,
-                representative_id=group[0],
+                representative_id=pick_best_asset(group, asset_lookup),
             )
         )
         clustered.update(group)
@@ -203,6 +213,7 @@ async def _find_embedding_duplicates(
 
     clusters: list[DuplicateCluster] = []
     processed: set[str] = set()
+    asset_lookup = {asset.id: asset for asset in unclustered}
 
     for asset in unclustered:
         if asset.id in processed:
@@ -239,7 +250,7 @@ async def _find_embedding_duplicates(
                         cluster_id=cluster_id,
                         cluster_type="embedding",
                         asset_ids=group,
-                        representative_id=asset.id,
+                        representative_id=pick_best_asset(group, asset_lookup),
                         similarity_scores=similarity_scores,
                     )
                 )
@@ -252,14 +263,147 @@ async def _find_embedding_duplicates(
     return clusters
 
 
-def _find_face_embedding_duplicates(
-    assets: list[Asset], clustered: set[str], threshold: float
+async def _find_face_embedding_duplicates(
+    assets: list[Asset], clustered: set[str], threshold: float, project_id: str
 ) -> list[DuplicateCluster]:
     """
     Group assets where the primary face embedding is very similar.
-    Only applies to assets with face embeddings.
-    Runs in-memory using cosine similarity.
+    Uses the stored face embedding collection and clusters one primary vector per asset.
     """
-    # This is a simplified implementation — a full version would query Qdrant
-    # face embeddings collection. For now, skip assets without embeddings.
-    return []
+    registry = get_registry()
+    embed_provider = registry.get("embedding", "fastembed")
+    if (
+        not embed_provider
+        or not hasattr(embed_provider, "_qdrant")
+        or embed_provider._qdrant is None
+    ):
+        return []
+
+    candidate_assets = [
+        asset for asset in assets
+        if asset.id not in clustered and asset.face_embedding_id
+    ]
+    if len(candidate_assets) < 2:
+        return []
+
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+    except ImportError:
+        logger.warning("qdrant-client not installed, skipping face duplicate stage")
+        return []
+
+    client = embed_provider._qdrant
+    collection = settings.QDRANT_FACE_COLLECTION
+    asset_ids = {asset.id for asset in candidate_assets}
+    loop = asyncio.get_event_loop()
+
+    def _collection_exists() -> bool:
+        existing = [c.name for c in client.get_collections().collections]
+        return collection in existing
+
+    if not await loop.run_in_executor(None, _collection_exists):
+        return []
+
+    def _scroll_all() -> list[dict[str, Any]]:
+        points_data: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            points, next_offset = client.scroll(
+                collection_name=collection,
+                scroll_filter=Filter(
+                    must=[FieldCondition(key="project_id", match=MatchValue(value=project_id))]
+                ),
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+            for point in points:
+                payload = point.payload or {}
+                asset_id = payload.get("asset_id")
+                if asset_id in asset_ids and point.vector is not None:
+                    points_data.append(
+                        {
+                            "asset_id": str(asset_id),
+                            "face_index": int(payload.get("face_index", 0)),
+                            "vector": point.vector,
+                        }
+                    )
+            if next_offset is None or len(points) == 0:
+                break
+            offset = next_offset
+        return points_data
+
+    face_points = await loop.run_in_executor(None, _scroll_all)
+    if len(face_points) < 2:
+        return []
+
+    primary_vectors: dict[str, list[float]] = {}
+    for point in sorted(face_points, key=lambda item: item["face_index"]):
+        primary_vectors.setdefault(point["asset_id"], point["vector"])
+
+    if len(primary_vectors) < 2:
+        return []
+
+    ordered_asset_ids = list(primary_vectors.keys())
+    vectors = np.array(
+        [primary_vectors[asset_id] for asset_id in ordered_asset_ids],
+        dtype=np.float32,
+    )
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    vectors_normed = vectors / norms
+
+    labels = _simple_similarity_clusters(vectors_normed, threshold)
+    asset_lookup = {asset.id: asset for asset in candidate_assets}
+    groups: dict[int, list[str]] = {}
+    for index, label in enumerate(labels):
+        groups.setdefault(label, []).append(ordered_asset_ids[index])
+
+    clusters: list[DuplicateCluster] = []
+    for _, group in groups.items():
+        if len(group) < 2:
+            continue
+
+        representative_id = pick_best_asset(group, asset_lookup)
+        rep_index = ordered_asset_ids.index(representative_id)
+        rep_vector = vectors_normed[rep_index]
+        similarity_scores = {
+            asset_id: float(np.dot(rep_vector, vectors_normed[ordered_asset_ids.index(asset_id)]))
+            for asset_id in group
+            if asset_id != representative_id
+        }
+
+        clusters.append(
+            DuplicateCluster(
+                cluster_id=str(uuid.uuid4()),
+                cluster_type="face",
+                asset_ids=group,
+                representative_id=representative_id,
+                similarity_scores=similarity_scores,
+            )
+        )
+        clustered.update(group)
+
+    return clusters
+
+
+def _simple_similarity_clusters(vectors: np.ndarray, threshold: float) -> list[int]:
+    """Greedy cosine-similarity clustering for duplicate grouping."""
+    n = len(vectors)
+    labels = [-1] * n
+    current_label = 0
+
+    for i in range(n):
+        if labels[i] != -1:
+            continue
+        labels[i] = current_label
+        for j in range(i + 1, n):
+            if labels[j] != -1:
+                continue
+            similarity = float(np.dot(vectors[i], vectors[j]))
+            if similarity >= threshold:
+                labels[j] = current_label
+        current_label += 1
+
+    return labels

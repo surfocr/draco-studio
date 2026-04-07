@@ -9,9 +9,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Cell,
   PieChart, Pie, ResponsiveContainer,
 } from 'recharts'
-import axios from 'axios'
-
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || 'http://localhost:18082' })
+import api from '@/hooks/useApi'
 
 interface Stats {
   total: number

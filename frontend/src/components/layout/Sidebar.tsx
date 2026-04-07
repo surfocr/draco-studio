@@ -16,11 +16,14 @@ import {
   BarChart2,
   Layers,
   Search,
+  LayoutDashboard,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { useAppStore } from '@/stores/useAppStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 
 const NAV_ITEMS = [
+  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/gallery', label: 'Gallery', icon: Images },
   { path: '/faces', label: 'Faces', icon: Users },
   { path: '/captions', label: 'Captions', icon: Brain },
@@ -31,8 +34,40 @@ const NAV_ITEMS = [
   { path: '/benchmark', label: 'Benchmark', icon: BarChart2 },
   { path: '/duplicates', label: 'Duplicates', icon: Layers },
   { path: '/search', label: 'Search', icon: Search },
-  { path: '/autosort', label: 'Auto-Sort', icon: Wand2 },
+  { path: '/autosort', label: 'Auto-Sort', icon: SlidersHorizontal },
 ]
+
+function ProjectSelector() {
+  const projects = useProjectStore((s) => s.projects)
+  const activeProject = useProjectStore((s) => s.activeProject)
+  const setActiveProject = useProjectStore((s) => s.setActiveProject)
+
+  if (projects.length === 0) {
+    return (
+      <div className="mx-2 mt-2 mb-1 px-2 py-1.5 rounded-md bg-surface-elevated border border-border">
+        <NavLink to="/settings" className="text-xs text-accent hover:underline">
+          + Create a project
+        </NavLink>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mx-2 mt-2 mb-1">
+      <select
+        value={activeProject?.id ?? ''}
+        onChange={(e) => setActiveProject(e.target.value || null)}
+        className="w-full bg-surface-elevated border border-border rounded-md px-2 py-1.5 text-sm text-text-primary truncate focus:outline-none focus:border-accent"
+      >
+        {projects.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name} ({p.asset_count})
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
 
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useAppStore()
@@ -66,13 +101,9 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Project indicator */}
-      {!sidebarCollapsed && activeProject && (
-        <div className="mx-2 mt-2 mb-1 px-2 py-1.5 rounded-md bg-surface-elevated border border-border">
-          <div className="text-xs text-text-secondary">Project</div>
-          <div className="text-sm font-medium truncate">{activeProject.name}</div>
-          <div className="text-xs text-text-secondary">{activeProject.asset_count} assets</div>
-        </div>
+      {/* Project selector */}
+      {!sidebarCollapsed && (
+        <ProjectSelector />
       )}
 
       {/* Nav */}

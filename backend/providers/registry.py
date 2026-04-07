@@ -4,7 +4,9 @@ All routers and services obtain providers via this registry.
 """
 from __future__ import annotations
 
+from importlib import import_module
 import logging
+import time
 from typing import Any, TypeVar
 
 from providers.base import ProviderBase
@@ -32,6 +34,8 @@ class ProviderRegistry:
         self._instances: dict[str, dict[str, ProviderBase]] = {}
         # { provider_type: { name: config_dict } }
         self._configs: dict[str, dict[str, dict[str, Any]]] = {}
+        self._availability_cache: dict[tuple[str, str], tuple[float, bool]] = {}
+        self._availability_ttl_seconds = 5.0
 
     @classmethod
     def instance(cls) -> "ProviderRegistry":
@@ -57,6 +61,7 @@ class ProviderRegistry:
         # Invalidate cached instance if re-registering
         if provider_type in self._instances and name in self._instances[provider_type]:
             del self._instances[provider_type][name]
+        self._availability_cache.pop((provider_type, name), None)
         logger.debug("Registered provider %s/%s", provider_type, name)
 
     def set_config(
@@ -69,6 +74,7 @@ class ProviderRegistry:
         # Invalidate so the instance is recreated with new config
         if provider_type in self._instances and name in self._instances[provider_type]:
             del self._instances[provider_type][name]
+        self._availability_cache.pop((provider_type, name), None)
 
     # ── Access ─────────────────────────────────────────────────────────────────
 
@@ -148,12 +154,21 @@ class ProviderRegistry:
         self, provider_type: str, name: str
     ) -> bool:
         """Return True if the named provider is available right now."""
+        cache_key = (provider_type, name)
+        cached = self._availability_cache.get(cache_key)
+        now = time.monotonic()
+        if cached and now - cached[0] < self._availability_ttl_seconds:
+            return cached[1]
+
         provider = self.get(provider_type, name)
         if provider is None:
             return False
         try:
-            return await provider.is_available()
+            is_available = await provider.is_available()
+            self._availability_cache[cache_key] = (now, is_available)
+            return is_available
         except Exception:
+            self._availability_cache[cache_key] = (now, False)
             return False
 
     # ── Bulk operations ────────────────────────────────────────────────────────
@@ -181,6 +196,27 @@ class ProviderRegistry:
 def get_registry() -> ProviderRegistry:
     """Module-level accessor for the singleton registry."""
     return ProviderRegistry.instance()
+
+
+def safe_register_provider(
+    registry: ProviderRegistry,
+    provider_type: str,
+    name: str,
+    module_path: str,
+    class_name: str,
+    *,
+    catch: tuple[type[BaseException], ...] = (Exception,),
+) -> bool:
+    """Import and register a provider through one consistent startup path."""
+    try:
+        module = import_module(module_path)
+        provider_class = getattr(module, class_name)
+        registry.register(provider_type, name, provider_class)
+        logger.info("Registered %s/%s", provider_type, name)
+        return True
+    except catch as exc:
+        logger.warning("Could not register %s/%s: %s", provider_type, name, exc)
+        return False
 
 
 # ── Default provider registration ─────────────────────────────────────────────
@@ -267,3 +303,70 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         logger.info("Registered caption/moondream")
     except Exception as e:
         logger.warning("Could not register caption/moondream: %s", e)
+
+    # Export providers
+    try:
+        from providers.export.lora_exporter import LoRAExporter
+        registry.register("export", "lora_exporter", LoRAExporter)
+        logger.info("Registered export/lora_exporter")
+    except Exception as e:
+        logger.warning("Could not register export/lora_exporter: %s", e)
+
+    try:
+        from providers.export.kohya_exporter import KohyaExporter
+        registry.register("export", "kohya_exporter", KohyaExporter)
+        logger.info("Registered export/kohya_exporter")
+    except Exception as e:
+        logger.warning("Could not register export/kohya_exporter: %s", e)
+
+    try:
+        from providers.export.zip_exporter import ZipExporter
+        registry.register("export", "zip_exporter", ZipExporter)
+        logger.info("Registered export/zip_exporter")
+    except Exception as e:
+        logger.warning("Could not register export/zip_exporter: %s", e)
+
+
+def register_optional_providers(registry: ProviderRegistry) -> None:
+    """Register optional providers that extend the default local workflow."""
+    safe_register_provider(
+        registry, "caption", "llava_next", "providers.caption.llava_next", "LLaVANextProvider"
+    )
+    safe_register_provider(
+        registry,
+        "quality",
+        "laion_aesthetic",
+        "providers.quality.laion_aesthetic",
+        "LAIONAestheticProvider",
+    )
+    safe_register_provider(
+        registry,
+        "upscaling",
+        "realesrgan",
+        "providers.editing.realesrgan",
+        "RealESRGANProvider",
+    )
+    safe_register_provider(
+        registry, "pose", "mmpose", "providers.pose.mmpose_provider", "MMPoseProvider"
+    )
+    safe_register_provider(
+        registry,
+        "head_pose",
+        "openface",
+        "providers.face.openface_provider",
+        "OpenFaceProvider",
+    )
+    safe_register_provider(
+        registry,
+        "action_units",
+        "openface",
+        "providers.face.openface_provider",
+        "OpenFaceProvider",
+    )
+    safe_register_provider(
+        registry,
+        "scene_understanding",
+        "clip_scene",
+        "providers.scene.clip_scene",
+        "CLIPSceneProvider",
+    )

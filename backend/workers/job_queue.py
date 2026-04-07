@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +14,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
 from config import settings
+from database import AsyncSessionLocal
+from models.job_run import JobRun
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ class JobQueue:
         self._running = False
         self._worker_task: asyncio.Task | None = None
         self._tasks: dict[str, Callable | Coroutine] = {}
+        self._running_tasks: dict[str, asyncio.Task] = {}
 
     @classmethod
     def instance(cls) -> "JobQueue":
@@ -76,12 +79,19 @@ class JobQueue:
     async def start(self) -> None:
         if self._running:
             return
+        await self._mark_interrupted_jobs()
         self._running = True
         self._worker_task = asyncio.create_task(self._worker())
         logger.info("JobQueue started (max_workers=%d)", settings.MAX_WORKERS)
 
     async def stop(self) -> None:
         self._running = False
+        if self._running_tasks:
+            running_tasks = list(self._running_tasks.values())
+            for task in running_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*running_tasks, return_exceptions=True)
         if self._worker_task:
             self._worker_task.cancel()
             try:
@@ -96,10 +106,11 @@ class JobQueue:
         task_fn: Callable[..., Coroutine],
         *args: Any,
         job_type: str = "generic",
+        job_id: str | None = None,
         **kwargs: Any,
     ) -> str:
         """Submit an async task. Returns job_id."""
-        job_id = str(uuid.uuid4())
+        job_id = job_id or str(uuid.uuid4())
         job = Job(id=job_id, type=job_type)
 
         # Evict oldest if at capacity
@@ -109,6 +120,7 @@ class JobQueue:
 
         self._jobs[job_id] = job
         self._tasks[job_id] = (task_fn, args, kwargs)
+        await self._persist_job(job)
         await self._queue.put(job)
         logger.debug("Submitted job %s (type=%s)", job_id[:8], job_type)
         return job_id
@@ -127,13 +139,19 @@ class JobQueue:
             return False
         job.status = "cancelled"
         job.finished_at = datetime.now(timezone.utc)
+        await self._persist_job(job)
+        # Cancel the actual running asyncio.Task if it exists
+        running_task = self._running_tasks.pop(job_id, None)
+        if running_task and not running_task.done():
+            running_task.cancel()
         return True
 
-    def update_progress(self, job_id: str, progress: int, message: str = "") -> None:
+    async def update_progress(self, job_id: str, progress: int, message: str = "") -> None:
         job = self._jobs.get(job_id)
         if job:
             job.progress = progress
             job.message = message
+            await self._persist_job(job)
 
     async def _worker(self) -> None:
         while self._running:
@@ -154,10 +172,14 @@ class JobQueue:
             task_fn, args, kwargs = task_info
             job.status = "running"
             job.started_at = datetime.now(timezone.utc)
+            await self._persist_job(job)
 
             try:
                 if asyncio.iscoroutinefunction(task_fn):
-                    result = await task_fn(*args, **kwargs)
+                    coro = task_fn(*args, **kwargs)
+                    task = asyncio.ensure_future(coro)
+                    self._running_tasks[job.id] = task
+                    result = await task
                 else:
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(
@@ -167,17 +189,60 @@ class JobQueue:
                 job.result = result
                 job.status = "done"
                 job.progress = 100
+                await self._persist_job(job)
                 logger.debug("Job %s done", job.id[:8])
 
             except asyncio.CancelledError:
                 job.status = "cancelled"
+                await self._persist_job(job)
+                logger.info("Job %s cancelled", job.id[:8])
             except Exception as exc:
                 job.status = "failed"
                 job.error = str(exc)
+                await self._persist_job(job)
                 logger.exception("Job %s failed: %s", job.id[:8], exc)
             finally:
+                self._running_tasks.pop(job.id, None)
                 job.finished_at = datetime.now(timezone.utc)
+                await self._persist_job(job)
                 self._queue.task_done()
+
+    async def _persist_job(self, job: Job) -> None:
+        try:
+            async with AsyncSessionLocal() as db:
+                row = await db.get(JobRun, job.id)
+                if row is None:
+                    row = JobRun(id=job.id, type=job.type)
+                    db.add(row)
+
+                row.type = job.type
+                row.status = job.status
+                row.progress = job.progress
+                row.message = job.message
+                row.result = job.result if isinstance(job.result, (dict, list)) or job.result is None else {"value": str(job.result)}
+                row.error = job.error
+                row.created_at = job.created_at
+                row.started_at = job.started_at
+                row.finished_at = job.finished_at
+                await db.commit()
+        except Exception as exc:
+            logger.warning("Failed to persist job %s: %s", job.id[:8], exc)
+
+    async def _mark_interrupted_jobs(self) -> None:
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(JobRun).where(JobRun.status.in_(("pending", "running")))
+                )
+                stale_jobs = result.scalars().all()
+                for row in stale_jobs:
+                    row.status = "failed"
+                    row.error = "Job interrupted by application restart"
+                    row.finished_at = datetime.now(timezone.utc)
+                if stale_jobs:
+                    await db.commit()
+        except Exception as exc:
+            logger.warning("Failed to mark interrupted jobs: %s", exc)
 
 
 _queue_instance: JobQueue | None = None

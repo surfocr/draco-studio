@@ -1,107 +1,140 @@
 """
-Duplicates router — pHash-based duplicate cluster detection for a project.
+Duplicates router backed by the shared duplicate-detection service.
 """
 from __future__ import annotations
 
-import logging
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.asset import Asset
+from workers.tasks import queue_duplicate_scan
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["duplicates"])
 
 
-@router.get("/projects/{project_id}/duplicates")
+class DuplicateImageResponse(BaseModel):
+    id: str
+    filepath: str
+    thumbnail_url: str
+    score: float
+    quality_score: float | None
+    keep: bool
+
+
+class DuplicateClusterResponse(BaseModel):
+    id: str
+    cluster_type: str
+    image_count: int
+    images: list[DuplicateImageResponse]
+    best_id: str
+
+
+class DuplicateListResponse(BaseModel):
+    clusters: list[DuplicateClusterResponse]
+    total_clusters: int
+    total_duplicates: int
+
+
+def _quality_tuple(asset: Asset) -> tuple[float, float, float, float, float]:
+    return (
+        float(asset.composite_score or 0.0),
+        float(asset.training_usefulness or 0.0),
+        float(asset.technical_quality or 0.0),
+        float(asset.face_quality or 0.0),
+        float((asset.width or 0) * (asset.height or 0)),
+    )
+
+
+def _representative_id(cluster_assets: list[Asset]) -> str:
+    best = max(
+        cluster_assets,
+        key=lambda asset: (_quality_tuple(asset), asset.imported_at or datetime.min),
+    )
+    return str(best.id)
+
+
+def _asset_payload(asset: Asset, *, keep: bool, score: float) -> DuplicateImageResponse:
+    return DuplicateImageResponse(
+        id=str(asset.id),
+        filepath=asset.filepath,
+        thumbnail_url=f"/api/assets/{asset.id}/thumbnail",
+        score=round(float(score), 4),
+        quality_score=asset.composite_score,
+        keep=keep,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/duplicates/scan",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def scan_duplicates(project_id: str) -> dict:
+    job_id = await queue_duplicate_scan(project_id)
+    return {"job_id": job_id}
+
+
+@router.get("/projects/{project_id}/duplicates", response_model=DuplicateListResponse)
 async def get_duplicate_clusters(
     project_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-    min_similarity: float = Query(default=0.85, ge=0.0, le=1.0),
-):
-    """
-    Return duplicate clusters for a project, grouped by pHash proximity.
-    Exact duplicates (same sha256) are reported first with similarity=1.0.
-    Near-duplicates are grouped by Hamming distance on perceptual hash.
-    """
-    result = await db.execute(
+) -> DuplicateListResponse:
+    """Read-only: returns stored duplicate clusters from the last scan.
+    Use POST /duplicates/scan to recompute."""
+
+    # Fetch assets that already have a duplicate_cluster_id assigned by a prior scan
+    asset_result = await db.execute(
         select(Asset).where(
             Asset.project_id == project_id,
             Asset.is_rejected.is_(False),
+            Asset.duplicate_cluster_id.isnot(None),
         )
     )
-    assets = result.scalars().all()
+    assets = asset_result.scalars().all()
 
-    clusters: list[dict] = []
-    processed: set[str] = set()
-
-    # ── Exact duplicates (sha256) ────────────────────────────────────────────
-    sha_map: dict[str, list[Asset]] = {}
+    # Group by cluster
+    clusters_map: dict[str, list[Asset]] = {}
+    cluster_types: dict[str, str] = {}
     for asset in assets:
-        if asset.sha256_hash:
-            sha_map.setdefault(asset.sha256_hash, []).append(asset)
+        cid = str(asset.duplicate_cluster_id)
+        clusters_map.setdefault(cid, []).append(asset)
+        if asset.duplicate_type:
+            cluster_types[cid] = asset.duplicate_type
 
-    for sha, group in sha_map.items():
-        if len(group) < 2:
-            continue
-        for a in group:
-            processed.add(str(a.id))
-        clusters.append({
-            "id": f"{group[0].id}_exact",
-            "type": "exact",
-            "similarity": 1.0,
-            "assets": [_asset_dict(a) for a in group],
-        })
-
-    # ── Near-duplicates (pHash Hamming distance) ─────────────────────────────
-    phash_assets = [a for a in assets if a.phash and str(a.id) not in processed]
-
-    for i, asset_a in enumerate(phash_assets):
-        if str(asset_a.id) in processed:
+    response_clusters: list[DuplicateClusterResponse] = []
+    for cid, cluster_assets in clusters_map.items():
+        if len(cluster_assets) < 2:
             continue
 
-        cluster_members = [asset_a]
-        best_similarity = min_similarity
+        best_id = _representative_id(cluster_assets)
+        images = [
+            _asset_payload(
+                asset,
+                keep=str(asset.id) == best_id,
+                score=float(asset.composite_score or 0.0),
+            )
+            for asset in sorted(cluster_assets, key=_quality_tuple, reverse=True)
+        ]
+        response_clusters.append(
+            DuplicateClusterResponse(
+                id=cid,
+                cluster_type=cluster_types.get(cid, "unknown"),
+                image_count=len(images),
+                images=images,
+                best_id=best_id,
+            )
+        )
 
-        for asset_b in phash_assets[i + 1:]:
-            if str(asset_b.id) in processed:
-                continue
-            try:
-                import imagehash
-                hash_a = imagehash.hex_to_hash(asset_a.phash)
-                hash_b = imagehash.hex_to_hash(asset_b.phash)
-                diff = hash_a - hash_b
-                similarity = 1.0 - (diff / 64.0)
-                if similarity >= min_similarity:
-                    cluster_members.append(asset_b)
-                    best_similarity = max(best_similarity, similarity)
-            except Exception:
-                continue
+    response_clusters.sort(key=lambda cluster: (cluster.image_count, cluster.cluster_type), reverse=True)
+    total_duplicates = sum(max(cluster.image_count - 1, 0) for cluster in response_clusters)
 
-        if len(cluster_members) > 1:
-            for m in cluster_members:
-                processed.add(str(m.id))
-            clusters.append({
-                "id": f"{asset_a.id}_near",
-                "type": "near",
-                "similarity": round(best_similarity, 4),
-                "assets": [_asset_dict(a) for a in cluster_members],
-            })
-
-    return {"clusters": clusters, "total": len(clusters)}
-
-
-def _asset_dict(asset: Asset) -> dict:
-    return {
-        "id": str(asset.id),
-        "filename": asset.filename,
-        "thumbnail_url": f"/api/assets/{asset.id}/thumbnail",
-        "composite_score": asset.composite_score,
-        "face_count": asset.face_count,
-        "width": asset.width,
-        "height": asset.height,
-    }
+    return DuplicateListResponse(
+        clusters=response_clusters,
+        total_clusters=len(response_clusters),
+        total_duplicates=total_duplicates,
+    )
