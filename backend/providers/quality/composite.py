@@ -151,11 +151,12 @@ class CompositeQualityScorer(QualityScorer):
             + resolution * 0.10
         )
         # Penalize images with extreme aspect ratios (LoRA training prefers ~1:1 to ~3:4)
-        aspect = max(w, h) / max(min(w, h), 1)
-        if aspect > 2.0:
-            training *= 0.85  # Mild penalty for very elongated images
-        elif aspect > 3.0:
-            training *= 0.70  # Stronger penalty for extreme panoramas/banners
+        if w > 0 and h > 0:
+            aspect = max(w, h) / min(w, h)
+            if aspect > 3.0:
+                training *= 0.70  # Stronger penalty for extreme panoramas/banners
+            elif aspect > 2.0:
+                training *= 0.85  # Mild penalty for very elongated images
         training = float(np.clip(training, 0.0, 1.0))
 
         explanations = self._build_explanations(components, composite)

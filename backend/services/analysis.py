@@ -259,7 +259,7 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
     )
     candidates = result.scalars().all()
 
-    matched_cluster_id: str | None = asset.duplicate_cluster_id
+    shared_cluster_id: str | None = asset.duplicate_cluster_id
 
     for candidate in candidates:
         try:
@@ -269,14 +269,14 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
             distance = h1 - h2
             if distance <= settings.PHASH_THRESHOLD:
                 # Merge clusters: prefer existing cluster_id if one exists
-                if not matched_cluster_id:
-                    matched_cluster_id = candidate.duplicate_cluster_id
-                if not matched_cluster_id:
+                if not shared_cluster_id:
+                    shared_cluster_id = candidate.duplicate_cluster_id
+                if not shared_cluster_id:
                     import uuid
-                    matched_cluster_id = str(uuid.uuid4())
+                    shared_cluster_id = str(uuid.uuid4())
 
                 # Assign the shared cluster to the candidate if needed
-                if candidate.duplicate_cluster_id != matched_cluster_id:
+                if candidate.duplicate_cluster_id != shared_cluster_id:
                     if candidate.duplicate_cluster_id:
                         # Merge: update all assets in the old cluster to use the new one
                         old_cid = candidate.duplicate_cluster_id
@@ -284,9 +284,9 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
                             select(A).where(A.duplicate_cluster_id == old_cid)
                         )
                         for merge_asset in merge_result.scalars().all():
-                            merge_asset.duplicate_cluster_id = matched_cluster_id
+                            merge_asset.duplicate_cluster_id = shared_cluster_id
                     else:
-                        candidate.duplicate_cluster_id = matched_cluster_id
+                        candidate.duplicate_cluster_id = shared_cluster_id
                         if not candidate.duplicate_type:
                             candidate.duplicate_type = "phash"
                 logger.debug(
@@ -296,8 +296,8 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
         except Exception:
             continue
 
-    if matched_cluster_id:
-        asset.duplicate_cluster_id = matched_cluster_id
+    if shared_cluster_id:
+        asset.duplicate_cluster_id = shared_cluster_id
         asset.duplicate_type = "phash"
 
 

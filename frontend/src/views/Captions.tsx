@@ -644,10 +644,6 @@ export function Captions() {
   const words = countWords(editText)
   const tokens = countTokens(editText)
 
-  // Filter tabs counts (future: used for tab badge counts)
-  void (assetsData?.items.filter((a) => !!a.active_caption_id).length ?? 0)
-  void (assetsData?.items.filter((a) => !a.active_caption_id).length ?? 0)
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Three-panel layout */}
