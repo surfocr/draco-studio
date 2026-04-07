@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import logging
 
+from workers.job_queue import get_job_queue
+from services.caption import CaptionService
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,7 +15,6 @@ async def queue_analysis_task(asset_id: str) -> str:
     """Queue full analysis for a single asset. Returns job_id."""
     from database import AsyncSessionLocal
     from services.analysis import analyze_asset
-    from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
 
@@ -34,7 +36,6 @@ async def queue_caption_task(
     """Queue bulk caption generation. Returns job_id."""
     from database import AsyncSessionLocal
     from services.caption import generate_caption
-    from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
 
@@ -63,7 +64,6 @@ async def queue_duplicate_scan(project_id: str) -> str:
     """Queue duplicate detection scan for a project."""
     from database import AsyncSessionLocal
     from services.duplicate import find_duplicates
-    from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
 
@@ -83,7 +83,6 @@ async def queue_ai_judge_task(
     """Queue AI judge scoring for a batch of assets. Returns job_id."""
     from database import AsyncSessionLocal
     from services.ai_judge import get_ai_judge
-    from workers.job_queue import get_job_queue
     from sqlalchemy import select
     from models.asset import Asset
 
@@ -124,14 +123,11 @@ async def queue_export_sidecars_task(
     job_id: str | None = None,
 ) -> str:
     """Queue sidecar .txt file export for a set of assets. Returns job_id."""
-    from database import AsyncSessionLocal
-    from services.caption import CaptionService
-    from workers.job_queue import get_job_queue
-
     queue = get_job_queue()
-    service = CaptionService()
 
     async def _run() -> dict:
+        from database import AsyncSessionLocal
+        service = CaptionService()
         written = 0
         errors: list[str] = []
         async with AsyncSessionLocal() as db:

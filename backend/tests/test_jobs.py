@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.job_run import JobRun
 from workers.job_queue import JobQueue
 
 
-@pytest.fixture
-def isolated_job_queue(engine, monkeypatch):
+@pytest_asyncio.fixture
+async def isolated_job_queue(engine, monkeypatch):
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     monkeypatch.setattr("workers.job_queue.AsyncSessionLocal", session_factory)
     JobQueue._instance = None

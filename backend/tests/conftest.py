@@ -9,17 +9,22 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Use an in-memory SQLite database for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("DRACO_SECRET_KEY", "test-secret-key-32chars-padding!!")
 
 
-@pytest_asyncio.fixture(scope="session")
-async def engine():
+@pytest_asyncio.fixture
+async def engine(tmp_path):
+    """Create a fresh file-based SQLite database per test.
+
+    A file-based database lets every connection (including those opened by
+    background tasks or the job queue) see the same tables that were created
+    during fixture setup, without sharing a single connection object.
+    """
     from database import Base
-    eng = create_async_engine(TEST_DATABASE_URL, echo=False)
+    db_path = tmp_path / "test.db"
+    url = f"sqlite+aiosqlite:///{db_path}"
+    eng = create_async_engine(url, echo=False)
     async with eng.begin() as conn:
         import models  # noqa: F401 — populate metadata
         await conn.run_sync(Base.metadata.create_all)
@@ -34,6 +39,26 @@ async def db(engine):
     async with session_factory() as session:
         yield session
         await session.rollback()
+
+
+@pytest.fixture
+def storage_env(tmp_path, monkeypatch):
+    """Patch settings to point at a temporary directory and ensure default
+    storage/quality providers are registered for any test that calls services
+    relying on the provider registry (e.g. ingest, caption export)."""
+    from config import settings
+    from providers.registry import get_registry, register_default_providers
+
+    monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
+    settings.storage_path.mkdir(parents=True, exist_ok=True)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+
+    registry = get_registry()
+    registry._instances.clear()
+    register_default_providers(registry)
+    yield tmp_path
+    registry._instances.clear()
 
 
 @pytest_asyncio.fixture

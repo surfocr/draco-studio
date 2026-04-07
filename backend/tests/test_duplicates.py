@@ -86,6 +86,9 @@ async def test_duplicates_endpoint_returns_stable_cluster_contract(db, clean_reg
         composite_score=0.92,
     )
 
+    # Run the scan to populate duplicate_cluster_id on the assets before reading
+    await find_duplicates(project.id, db)
+
     async with _client_for_db(db) as client:
         response = await client.get(f"/api/projects/{project.id}/duplicates")
 

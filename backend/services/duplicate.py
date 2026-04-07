@@ -286,12 +286,6 @@ async def _find_face_embedding_duplicates(
     if len(candidate_assets) < 2:
         return []
 
-    try:
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-    except ImportError:
-        logger.warning("qdrant-client not installed, skipping face duplicate stage")
-        return []
-
     client = embed_provider._qdrant
     collection = settings.QDRANT_FACE_COLLECTION
     asset_ids = {asset.id for asset in candidate_assets}
@@ -304,15 +298,22 @@ async def _find_face_embedding_duplicates(
     if not await loop.run_in_executor(None, _collection_exists):
         return []
 
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue as _MatchValue
+        def _make_scroll_filter():
+            return Filter(must=[FieldCondition(key="project_id", match=_MatchValue(value=project_id))])
+    except ImportError:
+        def _make_scroll_filter():  # type: ignore[misc]
+            return None
+
     def _scroll_all() -> list[dict[str, Any]]:
         points_data: list[dict[str, Any]] = []
         offset = None
+        scroll_filter = _make_scroll_filter()
         while True:
             points, next_offset = client.scroll(
                 collection_name=collection,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="project_id", match=MatchValue(value=project_id))]
-                ),
+                scroll_filter=scroll_filter,
                 limit=256,
                 offset=offset,
                 with_payload=True,

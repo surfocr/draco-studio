@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -88,10 +86,13 @@ async def test_list_pending_results_filters_by_project(db):
 
 
 @pytest.mark.asyncio
-async def test_augmentation_preview_endpoint_serves_result_file(client, db, tmp_path):
+async def test_augmentation_preview_endpoint_serves_result_file(client, db, storage_env):
     project = await _create_project(db, "preview")
     asset = await _create_asset(db, project.id, "source.png")
-    output = tmp_path / "preview.png"
+    from config import settings
+    preview_dir = settings.storage_path / project.id
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    output = preview_dir / "preview.png"
     output.write_bytes(b"fake-image")
     job = AugmentationJob(
         project_id=project.id,
@@ -111,16 +112,17 @@ async def test_augmentation_preview_endpoint_serves_result_file(client, db, tmp_
 
 
 @pytest.mark.asyncio
-async def test_augmentation_preview_endpoint_404s_for_missing_file(client, db):
+async def test_augmentation_preview_endpoint_404s_for_missing_file(client, db, storage_env):
     project = await _create_project(db, "missing-preview")
     asset = await _create_asset(db, project.id, "source.png")
+    from config import settings
     job = AugmentationJob(
         project_id=project.id,
         source_asset_id=asset.id,
         augmentation_type="outpaint",
         provider="basic_editor",
         status="pending_review",
-        output_path=str(Path("C:/definitely/missing/file.png")),
+        output_path=str(settings.storage_path / project.id / "nonexistent.png"),
     )
     db.add(job)
     await db.commit()

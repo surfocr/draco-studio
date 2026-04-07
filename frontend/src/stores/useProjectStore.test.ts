@@ -44,7 +44,7 @@ describe('useProjectStore', () => {
     vi.resetModules()
     vi.stubGlobal('localStorage', createStorage())
     ;({ useProjectStore } = await import('./useProjectStore'))
-    useProjectStore.setState({ projects: [], activeProjectId: null })
+    useProjectStore.setState({ projects: [], activeProjectId: null, activeProject: null })
   })
 
   it('auto-selects the first project when loading projects with no active selection', () => {

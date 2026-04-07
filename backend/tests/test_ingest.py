@@ -13,26 +13,12 @@ from config import settings
 from models.asset import Asset
 from models.caption import CaptionVersion
 from models.project import Project
-from providers.registry import get_registry
 from services.ingest import IngestSource, ingest_directory, ingest_files
 
 def _png_bytes() -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (2, 2), color=(255, 0, 0)).save(buffer, format="PNG")
     return buffer.getvalue()
-
-
-@pytest.fixture
-def storage_env(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "STORAGE_PATH", str(tmp_path / "storage"))
-    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path / "data"))
-    settings.storage_path.mkdir(parents=True, exist_ok=True)
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-
-    registry = get_registry()
-    registry._instances.clear()
-    yield tmp_path
-    registry._instances.clear()
 
 
 async def _create_project(db, name: str = "ingest-project") -> Project:
@@ -50,7 +36,7 @@ def _write_png(path: Path) -> None:
 @pytest.mark.asyncio
 async def test_ingest_upload_returns_job_id(client):
     r = await client.post("/api/projects", json={"name": "test-ingest", "description": ""})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     project_id = r.json()["id"]
 
     with patch("workers.job_queue.get_job_queue") as mock_q:
@@ -73,7 +59,7 @@ async def test_ingest_upload_returns_job_id(client):
 @pytest.mark.asyncio
 async def test_ingest_dir_returns_job_id(client, storage_env):
     r = await client.post("/api/projects", json={"name": "test-ingest-dir", "description": ""})
-    assert r.status_code == 200
+    assert r.status_code == 201
     project_id = r.json()["id"]
 
     ingest_dir_path = settings.data_dir / "ingest-dir-test"

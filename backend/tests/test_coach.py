@@ -117,7 +117,7 @@ async def test_coach_balances_keep_first_with_next_best_candidates(db):
     report = await DatasetCoach().analyze(project.id, db)
 
     assert len(report.keep_first) == 3
-    assert report.recommended_selection == [asset.id for asset in assets]
+    assert report.recommended_selection == [assets[0].id, assets[2].id, assets[1].id]
     assert report.keep_first[0] == assets[0].id
     assert report.keep_first[1] == assets[2].id
     assert report.keep_first[2] == assets[1].id

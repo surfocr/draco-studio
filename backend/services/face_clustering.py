@@ -57,17 +57,22 @@ async def run_face_clustering(project_id: str, db: AsyncSession) -> dict:
         return {"error": "No face embeddings found", "clustered": 0, "clusters": 0}
 
     # Fetch all face embeddings for this project
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue as _MatchValue
+        def _make_scroll_filter():
+            return Filter(must=[FieldCondition(key="project_id", match=_MatchValue(value=project_id))])
+    except ImportError:
+        def _make_scroll_filter():  # type: ignore[misc]
+            return None
 
     def _scroll_all() -> list[dict]:
         results = []
         offset = None
+        scroll_filter = _make_scroll_filter()
         while True:
             points, next_offset = client.scroll(
                 collection_name=collection,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="project_id", match=MatchValue(value=project_id))]
-                ),
+                scroll_filter=scroll_filter,
                 limit=256,
                 offset=offset,
                 with_payload=True,
