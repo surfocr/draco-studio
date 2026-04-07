@@ -37,7 +37,7 @@ interface FileSystemDirectoryEntry extends FileSystemEntry {
   }
 }
 
-interface DataTransferItemWithEntry extends DataTransferItem {
+interface DataTransferItemWithEntry extends Omit<DataTransferItem, 'webkitGetAsEntry'> {
   webkitGetAsEntry?: () => FileSystemEntry | null
 }
 

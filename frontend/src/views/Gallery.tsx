@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Flag,
+  FolderInput,
   RefreshCw,
   SortAsc,
   SortDesc,
@@ -177,6 +178,41 @@ export function Gallery() {
   )
 
   const [detailAssetId, setDetailAssetId] = useState<string | null>(null)
+  const [showPathImport, setShowPathImport] = useState(false)
+  const [importPath, setImportPath] = useState('')
+  const [importRecursive, setImportRecursive] = useState(true)
+  const pathInputRef = useRef<HTMLInputElement>(null)
+
+  const ingestDirectoryMutation = useMutation({
+    mutationFn: (path: string) =>
+      assetsApi.ingestDirectory(activeProject!.id, path, importRecursive),
+    onSuccess: (result) => {
+      addJob({
+        id: result.job_id,
+        type: 'ingest_directory',
+        status: 'pending',
+        progress: 0,
+        message: `Importing from folder…`,
+        result: null,
+        error: null,
+        created_at: new Date().toISOString(),
+        started_at: null,
+        finished_at: null,
+      })
+      toast.success('Folder import started')
+      setShowPathImport(false)
+      setImportPath('')
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to start folder import')
+    },
+  })
+
+  const handlePathImportSubmit = () => {
+    const trimmed = importPath.trim()
+    if (!trimmed) return
+    ingestDirectoryMutation.mutate(trimmed)
+  }
 
   const handleSelect = useCallback(
     (id: string, multi: boolean, _range: boolean) => {
@@ -321,6 +357,18 @@ export function Gallery() {
         </label>
 
         <button
+          className="btn btn-secondary btn-sm"
+          title="Import images from a folder path on this machine (server-side, no browser memory limit)"
+          onClick={() => {
+            setShowPathImport(true)
+            setTimeout(() => pathInputRef.current?.focus(), 50)
+          }}
+        >
+          <FolderInput size={13} />
+          Import by Path
+        </button>
+
+        <button
           className={clsx('btn-ghost btn-icon', isFetching && 'animate-spin')}
           onClick={() => refetch()}
           title="Refresh"
@@ -328,6 +376,71 @@ export function Gallery() {
           <RefreshCw size={14} />
         </button>
       </div>
+
+      {/* Import by path dialog */}
+      {showPathImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Import Folder by Path</h2>
+              <button
+                className="btn-ghost btn-icon"
+                onClick={() => setShowPathImport(false)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="mb-3 text-sm text-text-secondary">
+              Enter the full path to a folder on this machine. The server reads images
+              directly — no upload size limits.
+            </p>
+            <label className="mb-1 block text-xs font-medium text-text-secondary">
+              Folder path
+            </label>
+            <input
+              ref={pathInputRef}
+              type="text"
+              className="input mb-3 w-full font-mono text-sm"
+              placeholder={
+                navigator.userAgent.includes('Win')
+                  ? 'C:\\Users\\you\\Pictures\\dataset'
+                  : '/home/you/pictures/dataset'
+              }
+              value={importPath}
+              onChange={(e) => setImportPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handlePathImportSubmit()
+                if (e.key === 'Escape') setShowPathImport(false)
+              }}
+            />
+            <label className="mb-4 flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={importRecursive}
+                onChange={(e) => setImportRecursive(e.target.checked)}
+              />
+              Include sub-folders (recursive)
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowPathImport(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={!importPath.trim() || ingestDirectoryMutation.isPending}
+                onClick={handlePathImportSubmit}
+              >
+                {ingestDirectoryMutation.isPending ? 'Starting…' : 'Start Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedCount > 0 && (
         <div className="flex flex-shrink-0 items-center gap-2 border-b border-accent/20 bg-accent/10 px-3 py-2 text-sm">
