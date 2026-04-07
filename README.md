@@ -165,7 +165,9 @@ copy frontend\.env.example frontend\.env
 Important notes:
 
 - `.env.example` is tuned for local development and should usually keep `DEBUG=true`.
-- `DRACO_SECRET_KEY` — `npm start` and `run-portable.bat` auto-generate a secure value when creating `.env`. If you copy manually, replace `change_me_to_a_random_secret` with a random hex string: `python -c "import secrets; print(secrets.token_hex(32))"`.
+- `DRACO_SECRET_KEY` — `npm start` and `run-portable.bat` auto-generate a secure value when creating `.env`. If you copy manually, replace `change_me_to_a_random_secret` with a random hex string.
+  - PowerShell / cmd: `python -c "import secrets; print(secrets.token_hex(32))"`
+  - Or paste this into the Python REPL (`python` then Enter): `import secrets; print(secrets.token_hex(32))`
 - Provider API keys must be saved through the encrypted API-key flow, not generic provider config fields.
 - `frontend/.env` should normally point `VITE_API_URL` at `http://127.0.0.1:18082`.
 

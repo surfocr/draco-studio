@@ -38,7 +38,7 @@ process.stderr.write(
     "  Windows : install Python 3.11+ from https://www.python.org/downloads/\n" +
     "            Make sure 'Add python.exe to PATH' is checked during install.\n" +
     "            Then reopen your terminal and retry.\n" +
-    "  macOS   : brew install python@3.11  (or use the python.org installer)\n" +
+    "  macOS   : brew install python@3.13  (or python@3.12, python@3.11)\n" +
     "  Linux   : sudo apt install python3  (or your distro equivalent)\n" +
     "\n" +
     "  Windows users: double-click run-portable.bat — it handles Python setup\n" +
