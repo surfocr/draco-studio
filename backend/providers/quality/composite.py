@@ -142,8 +142,20 @@ class CompositeQualityScorer(QualityScorer):
         technical = (sharpness * 0.5 + resolution * 0.3 + (1.0 - noise_estimate) * 0.2)
         technical = float(np.clip(technical, 0.0, 1.0))
 
-        # Training usefulness = composite weighted toward face quality
-        training = composite * 0.7 + face_quality * 0.2 + resolution * 0.1
+        # Training usefulness = composite weighted toward face quality + LoRA-specific factors
+        # For LoRA training, sharpness and face quality matter most
+        training = (
+            composite * 0.50
+            + face_quality * 0.25
+            + sharpness * 0.15
+            + resolution * 0.10
+        )
+        # Penalize images with extreme aspect ratios (LoRA training prefers ~1:1 to ~3:4)
+        aspect = max(w, h) / max(min(w, h), 1)
+        if aspect > 2.0:
+            training *= 0.85  # Mild penalty for very elongated images
+        elif aspect > 3.0:
+            training *= 0.70  # Stronger penalty for extreme panoramas/banners
         training = float(np.clip(training, 0.0, 1.0))
 
         explanations = self._build_explanations(components, composite)

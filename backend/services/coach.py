@@ -1094,6 +1094,8 @@ class DatasetCoach:
             missing.append("Wide/full-body shots")
         if shot_counts.get("closeup", 0) + shot_counts.get("extreme_closeup", 0) == 0:
             missing.append("Closeup/extreme closeup shots")
+        if shot_counts.get("medium", 0) + shot_counts.get("upper_body", 0) == 0:
+            missing.append("Medium/upper-body shots (important for LoRA)")
 
         yaw_assets = [a for a in assets if a.head_pose_yaw is not None]
         if yaw_assets:
@@ -1124,6 +1126,20 @@ class DatasetCoach:
                 missing.append("Indoor/studio backgrounds")
             if not has_outdoor:
                 missing.append("Outdoor backgrounds")
+
+        # LoRA-specific: check for lighting variety
+        lighting_types: set[str] = set()
+        for a in assets:
+            if a.lighting_tags:
+                tags = a.lighting_tags if isinstance(a.lighting_tags, list) else []
+                lighting_types.update(tags)
+        if len(lighting_types) < 2 and len(assets) >= 10:
+            missing.append("Varied lighting conditions (natural, studio, golden hour)")
+
+        # LoRA-specific: check for plain background shots
+        plain_bg_count = sum(1 for a in assets if a.has_plain_background)
+        if plain_bg_count == 0 and len(assets) >= 5:
+            missing.append("Images with plain/clean backgrounds (improves subject isolation)")
 
         return missing if missing else ["Coverage looks comprehensive"]
 

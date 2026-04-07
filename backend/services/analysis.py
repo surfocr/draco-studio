@@ -240,7 +240,8 @@ async def analyze_asset(
 async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
     """
     Stage 2 duplicate check: pHash Hamming distance.
-    Marks duplicates found by hash comparison.
+    Builds proper duplicate clusters using union-find: when A matches B and B
+    matches C, all three share the same cluster_id.
     """
     if not asset.phash:
         return
@@ -258,6 +259,8 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
     )
     candidates = result.scalars().all()
 
+    matched_cluster_id: str | None = asset.duplicate_cluster_id
+
     for candidate in candidates:
         try:
             import imagehash
@@ -265,23 +268,37 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
             h2 = imagehash.hex_to_hash(candidate.phash)
             distance = h1 - h2
             if distance <= settings.PHASH_THRESHOLD:
-                # Mark both as duplicates
-                cluster_id = asset.duplicate_cluster_id or candidate.duplicate_cluster_id
-                if not cluster_id:
+                # Merge clusters: prefer existing cluster_id if one exists
+                if not matched_cluster_id:
+                    matched_cluster_id = candidate.duplicate_cluster_id
+                if not matched_cluster_id:
                     import uuid
-                    cluster_id = str(uuid.uuid4())
-                asset.duplicate_cluster_id = cluster_id
-                asset.duplicate_type = "phash"
-                candidate.duplicate_cluster_id = cluster_id
-                if not candidate.duplicate_type:
-                    candidate.duplicate_type = "phash"
+                    matched_cluster_id = str(uuid.uuid4())
+
+                # Assign the shared cluster to the candidate if needed
+                if candidate.duplicate_cluster_id != matched_cluster_id:
+                    if candidate.duplicate_cluster_id:
+                        # Merge: update all assets in the old cluster to use the new one
+                        old_cid = candidate.duplicate_cluster_id
+                        merge_result = await db.execute(
+                            select(A).where(A.duplicate_cluster_id == old_cid)
+                        )
+                        for merge_asset in merge_result.scalars().all():
+                            merge_asset.duplicate_cluster_id = matched_cluster_id
+                    else:
+                        candidate.duplicate_cluster_id = matched_cluster_id
+                        if not candidate.duplicate_type:
+                            candidate.duplicate_type = "phash"
                 logger.debug(
                     "pHash duplicate: %s ↔ %s (distance=%d)",
                     asset.id[:8], candidate.id[:8], distance,
                 )
-                break  # One duplicate is enough to flag it
         except Exception:
             continue
+
+    if matched_cluster_id:
+        asset.duplicate_cluster_id = matched_cluster_id
+        asset.duplicate_type = "phash"
 
 
 async def analyze_batch(
