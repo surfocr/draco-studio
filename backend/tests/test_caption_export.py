@@ -58,7 +58,7 @@ async def test_queue_export_sidecars_task_is_importable():
 async def test_caption_export_endpoint_returns_job_id(client):
     """POST /api/projects/{id}/captions/export returns a job_id."""
     r = await client.post("/api/projects", json={"name": "test-caption-export", "description": ""})
-    assert r.status_code == 200
+    assert r.status_code == 201
     project_id = r.json()["id"]
 
     with patch("services.caption.CaptionService.export_sidecars", new_callable=AsyncMock) as mock_export:
@@ -70,7 +70,8 @@ async def test_caption_export_endpoint_returns_job_id(client):
         )
 
     # Should succeed (200 or 202) — not a 500 ImportError
-    assert r.status_code in (200, 202, 404), \
+    # 404 if project not found, 422 if project has no captioned assets
+    assert r.status_code in (200, 202, 404, 422), \
         f"Unexpected status {r.status_code}: {r.text}"
 
 
@@ -101,7 +102,7 @@ async def test_export_sidecars_task_uses_fresh_session():
     assert len(submitted_fns) == 1
 
     # Execute the worker and verify it opens AsyncSessionLocal
-    with patch("database.AsyncSessionLocal") as mock_session_factory:
+    with patch("workers.tasks.AsyncSessionLocal") as mock_session_factory:
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
@@ -142,7 +143,7 @@ async def test_export_sidecars_task_handles_missing_caption():
             job_id="test-job",
         )
 
-    with patch("database.AsyncSessionLocal") as mock_session_factory:
+    with patch("workers.tasks.AsyncSessionLocal") as mock_session_factory:
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)

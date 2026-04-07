@@ -50,7 +50,7 @@ def _write_png(path: Path) -> None:
 @pytest.mark.asyncio
 async def test_ingest_upload_returns_job_id(client):
     r = await client.post("/api/projects", json={"name": "test-ingest", "description": ""})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     project_id = r.json()["id"]
 
     with patch("workers.job_queue.get_job_queue") as mock_q:
@@ -73,7 +73,7 @@ async def test_ingest_upload_returns_job_id(client):
 @pytest.mark.asyncio
 async def test_ingest_dir_returns_job_id(client, storage_env):
     r = await client.post("/api/projects", json={"name": "test-ingest-dir", "description": ""})
-    assert r.status_code == 200
+    assert r.status_code == 201
     project_id = r.json()["id"]
 
     ingest_dir_path = settings.data_dir / "ingest-dir-test"

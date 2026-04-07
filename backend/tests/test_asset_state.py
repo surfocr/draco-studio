@@ -47,6 +47,9 @@ def storage_env(tmp_path, monkeypatch):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
 
     registry = get_registry()
+    saved_classes = dict(registry._classes)
+    saved_instances = dict(registry._instances)
+    saved_configs = dict(registry._configs)
     registry._classes.clear()
     registry._instances.clear()
     registry._configs.clear()
@@ -57,6 +60,9 @@ def storage_env(tmp_path, monkeypatch):
     registry._classes.clear()
     registry._instances.clear()
     registry._configs.clear()
+    registry._classes.update(saved_classes)
+    registry._instances.update(saved_instances)
+    registry._configs.update(saved_configs)
 
 
 async def _create_project(db, name: str = "asset-state") -> Project:

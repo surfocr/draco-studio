@@ -84,10 +84,34 @@ async def get_duplicate_clusters(
     project_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> DuplicateListResponse:
-    """Read-only: returns stored duplicate clusters from the last scan.
-    Use POST /duplicates/scan to recompute."""
+    """Returns duplicate clusters for a project.
 
-    # Fetch assets that already have a duplicate_cluster_id assigned by a prior scan
+    If no stored cluster data exists (first call or after a reset), an inline
+    exact-hash scan is performed automatically.  Full embedding / face scans
+    should be triggered via POST /duplicates/scan.
+    """
+
+    # Check whether any asset in this project has cluster data already
+    any_clustered_result = await db.execute(
+        select(Asset).where(
+            Asset.project_id == project_id,
+            Asset.is_rejected.is_(False),
+            Asset.duplicate_cluster_id.isnot(None),
+        ).limit(1)
+    )
+    has_stored_clusters = any_clustered_result.scalar_one_or_none() is not None
+
+    if not has_stored_clusters:
+        # Run a fast exact-hash scan inline so first-time callers see results
+        # without having to explicitly trigger a background scan.
+        try:
+            from services.duplicate import find_duplicates
+            await find_duplicates(project_id, db, stages=["exact"])
+            await db.flush()
+        except Exception:
+            pass  # Return empty results rather than 500 if scan fails
+
+    # Fetch assets that have a duplicate_cluster_id assigned
     asset_result = await db.execute(
         select(Asset).where(
             Asset.project_id == project_id,

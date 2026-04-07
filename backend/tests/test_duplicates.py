@@ -58,7 +58,12 @@ async def _client_for_db(db):
 
 @pytest.fixture
 def clean_registry():
+    """Isolate registry state for duplicate tests. Saves and restores all registered classes."""
+    from providers.registry import register_default_providers
     registry = get_registry()
+    saved_classes = dict(registry._classes)
+    saved_instances = dict(registry._instances)
+    saved_configs = dict(registry._configs)
     registry._classes.clear()
     registry._instances.clear()
     registry._configs.clear()
@@ -66,6 +71,9 @@ def clean_registry():
     registry._classes.clear()
     registry._instances.clear()
     registry._configs.clear()
+    registry._classes.update(saved_classes)
+    registry._instances.update(saved_instances)
+    registry._configs.update(saved_configs)
 
 
 @pytest.mark.asyncio
