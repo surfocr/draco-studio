@@ -1,5 +1,7 @@
 """
 Shared test fixtures — in-memory SQLite database and FastAPI test client.
+
+Uses shared-cache in-memory SQLite so all connections see the same tables/data.
 """
 from __future__ import annotations
 
@@ -8,18 +10,24 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
-# Use an in-memory SQLite database for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Shared-cache in-memory SQLite: every connection sees the same database.
+TEST_DATABASE_URL = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared&uri=true"
 
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 os.environ.setdefault("DRACO_SECRET_KEY", "test-secret-key-32chars-padding!!")
+os.environ.setdefault("ALLOW_REMOTE_ACCESS", "true")
 
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
     from database import Base
-    eng = create_async_engine(TEST_DATABASE_URL, echo=False)
+    eng = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        poolclass=StaticPool,
+    )
     async with eng.begin() as conn:
         import models  # noqa: F401 — populate metadata
         await conn.run_sync(Base.metadata.create_all)
@@ -39,8 +47,7 @@ async def db(engine):
 @pytest_asyncio.fixture
 async def client(engine):
     """FastAPI test client wired to the in-memory database."""
-    from database import get_db, AsyncSessionLocal
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from database import get_db
     from main import app
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
