@@ -40,6 +40,9 @@ class UserPreferences(Base):
     # Duplicate handling
     duplicate_action: Mapped[str] = mapped_column(String(16), default="flag")
     # "flag"/"auto_reject"/"ignore"
+    duplicate_phash_threshold: Mapped[int] = mapped_column(Integer, default=8)
+    duplicate_embedding_threshold: Mapped[float] = mapped_column(default=0.95)
+    duplicate_face_threshold: Mapped[float] = mapped_column(default=0.80)
 
     # Extra JSON for extensibility
     extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)

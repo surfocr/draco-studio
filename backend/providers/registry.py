@@ -304,6 +304,14 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     except Exception as e:
         logger.warning("Could not register caption/moondream: %s", e)
 
+    # Caption — LM Studio (local OpenAI-compatible server)
+    try:
+        from providers.caption.lmstudio import LMStudioCaptionProvider
+        registry.register("caption", "lmstudio", LMStudioCaptionProvider)
+        logger.info("Registered caption/lmstudio")
+    except Exception as e:
+        logger.warning("Could not register caption/lmstudio: %s", e)
+
     # Export providers
     try:
         from providers.export.lora_exporter import LoRAExporter
@@ -331,6 +339,9 @@ def register_optional_providers(registry: ProviderRegistry) -> None:
     """Register optional providers that extend the default local workflow."""
     safe_register_provider(
         registry, "caption", "llava_next", "providers.caption.llava_next", "LLaVANextProvider"
+    )
+    safe_register_provider(
+        registry, "caption", "florence2", "providers.caption.florence2", "Florence2CaptionProvider"
     )
     safe_register_provider(
         registry,

@@ -1,7 +1,7 @@
 // frontend/src/views/Benchmark.tsx
 // Provider bakeoff/benchmark panel — compare caption providers on a sample
 
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useJobStore } from '@/stores/useJobStore'

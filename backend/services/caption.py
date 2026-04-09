@@ -286,6 +286,8 @@ class CaptionService:
             if version and version.text:
                 if use_regex:
                     try:
+                        if len(find) > 500:
+                            raise re.error("Pattern too long (max 500 characters)")
                         new_text = re.sub(find, replace, version.text)
                     except re.error as exc:
                         logger.warning("Invalid regex '%s': %s", find, exc)

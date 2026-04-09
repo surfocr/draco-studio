@@ -47,7 +47,7 @@ async def run_face_clustering(project_id: str, db: AsyncSession) -> dict:
 
     # Check collection exists
     import asyncio
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _collection_exists() -> bool:
         existing = [c.name for c in client.get_collections().collections]

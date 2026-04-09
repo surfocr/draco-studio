@@ -21,6 +21,13 @@ PYTHON=$(command -v python3 || command -v python)
 PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 info "Python $PY_VERSION found at $PYTHON"
 
+# Require Python 3.11+
+"$PYTHON" -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null
+if [ $? -ne 0 ]; then
+  error "Python 3.11 or newer is required (found $PY_VERSION)."
+  exit 1
+fi
+
 if ! command -v node &>/dev/null; then
   error "Node.js not found. Install Node.js 18+."
   exit 1
@@ -28,10 +35,18 @@ fi
 info "Node.js $(node --version) found"
 
 # ── Install backend deps ───────────────────────────────────────────────────────
-if [ ! -f backend/.deps_installed ] || [ backend/requirements.txt -nt backend/.deps_installed ]; then
+VENV_DIR="backend/.venv"
+VENV_PY="$VENV_DIR/bin/python"
+
+if [ ! -f "$VENV_PY" ]; then
+  info "Creating backend virtual environment..."
+  "$PYTHON" -m venv "$VENV_DIR"
+fi
+
+if [ ! -f "$VENV_DIR/.deps.ok" ] || [ backend/requirements.txt -nt "$VENV_DIR/.deps.ok" ]; then
   info "Installing backend dependencies..."
-  "$PYTHON" -m pip install -r backend/requirements.txt --quiet
-  touch backend/.deps_installed
+  "$VENV_PY" -m pip install -r backend/requirements.txt
+  touch "$VENV_DIR/.deps.ok"
 else
   info "Backend dependencies up to date"
 fi
@@ -44,9 +59,16 @@ else
   info "Frontend dependencies up to date"
 fi
 
-# ── Run migrations ─────────────────────────────────────────────────────────────
-info "Running database migrations..."
-cd backend && "$PYTHON" -m alembic upgrade head 2>&1 | tail -5 && cd ..
+# ── Enable DEBUG mode for local desktop use ────────────────────────────────────
+export DEBUG="${DEBUG:-true}"
+
+# ── Run migrations (skip if no alembic or if DEBUG auto-creates tables) ────────
+if [ -f backend/alembic.ini ] && [ "$DEBUG" != "true" ]; then
+  info "Running database migrations..."
+  cd backend && "$PYTHON" -m alembic upgrade head 2>&1 | tail -5 && cd ..
+else
+  info "Database will auto-create tables in DEBUG mode"
+fi
 
 # ── Create .env if missing ────────────────────────────────────────────────────
 if [ ! -f .env ]; then
@@ -56,8 +78,8 @@ fi
 
 # ── Start servers ──────────────────────────────────────────────────────────────
 info "Starting Draco Studio..."
-info "  Backend:  http://localhost:8000"
-info "  Frontend: http://localhost:5173"
+info "  Backend:  http://127.0.0.1:18082"
+info "  Frontend: http://127.0.0.1:5173"
 info "  Press Ctrl+C to stop both servers"
 echo ""
 
@@ -69,11 +91,11 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-cd backend && "$PYTHON" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
+cd backend && "$SCRIPT_DIR/$VENV_DIR/bin/python" -m uvicorn main:app --host 127.0.0.1 --port 18082 --reload &
 BACKEND_PID=$!
 cd "$SCRIPT_DIR"
 
-cd frontend && npm run dev &
+cd frontend && npm run dev -- --host 127.0.0.1 &
 FRONTEND_PID=$!
 cd "$SCRIPT_DIR"
 

@@ -464,7 +464,7 @@ class RankingService:
         # Delta-based undo: restore ALL before-values stored on the comparison.
         winner = await db.get(Asset, comparison.winner_asset_id)
         loser = await db.get(Asset, comparison.loser_asset_id)
-        if winner is not None:
+        if winner is not None and comparison.winner_mu_before is not None:
             winner.trueskill_mu = float(comparison.winner_mu_before)
             if comparison.winner_sigma_before is not None:
                 winner.trueskill_sigma = float(comparison.winner_sigma_before)
@@ -473,7 +473,7 @@ class RankingService:
             winner.ranking_comparisons_count = max(
                 (winner.ranking_comparisons_count or 1) - 1, 0
             )
-        if loser is not None:
+        if loser is not None and comparison.loser_mu_before is not None:
             loser.trueskill_mu = float(comparison.loser_mu_before)
             if comparison.loser_sigma_before is not None:
                 loser.trueskill_sigma = float(comparison.loser_sigma_before)

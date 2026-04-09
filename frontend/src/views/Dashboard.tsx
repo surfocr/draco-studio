@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Images, CheckCircle, XCircle, Clock, FileText, Zap,
@@ -103,6 +104,12 @@ export function Dashboard() {
           <p className="text-lg font-medium text-zinc-400">No project selected</p>
           <p className="text-sm mt-1">Create or select a project to see your dataset stats</p>
         </div>
+        <Link
+          to="/settings"
+          className="mt-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors"
+        >
+          Create Project
+        </Link>
       </div>
     )
   }

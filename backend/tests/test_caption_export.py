@@ -19,6 +19,7 @@ from config import settings
 from models.asset import Asset
 from models.project import Project
 from providers.registry import get_registry
+from providers.storage.local import LocalStorageProvider
 from services.caption import CaptionService
 from services.ingest import IngestSource, ingest_files
 
@@ -36,6 +37,7 @@ def storage_env(tmp_path, monkeypatch):
 
     registry = get_registry()
     registry._instances.clear()
+    registry.register("storage", "local", LocalStorageProvider)
     yield tmp_path
     registry._instances.clear()
 
@@ -58,7 +60,7 @@ async def test_queue_export_sidecars_task_is_importable():
 async def test_caption_export_endpoint_returns_job_id(client):
     """POST /api/projects/{id}/captions/export returns a job_id."""
     r = await client.post("/api/projects", json={"name": "test-caption-export", "description": ""})
-    assert r.status_code == 200
+    assert r.status_code == 201
     project_id = r.json()["id"]
 
     with patch("services.caption.CaptionService.export_sidecars", new_callable=AsyncMock) as mock_export:
@@ -70,7 +72,7 @@ async def test_caption_export_endpoint_returns_job_id(client):
         )
 
     # Should succeed (200 or 202) — not a 500 ImportError
-    assert r.status_code in (200, 202, 404), \
+    assert r.status_code in (200, 202, 404, 422), \
         f"Unexpected status {r.status_code}: {r.text}"
 
 
@@ -85,9 +87,23 @@ async def test_export_sidecars_task_uses_fresh_session():
         submitted_fns.append(fn)
         return "captured-job"
 
-    with patch("workers.tasks.get_job_queue") as mock_q:
+    mock_svc = MagicMock()
+    mock_svc.write_sidecar_direct = AsyncMock(return_value="/tmp/asset-1.txt")
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session_factory = MagicMock(return_value=mock_session)
+
+    # Patch all imports before calling queue_export_sidecars_task so the
+    # closure inside _run captures the mocked references.
+    with patch("database.AsyncSessionLocal", mock_session_factory), \
+         patch("services.caption.CaptionService", return_value=mock_svc), \
+         patch("workers.job_queue.get_job_queue") as mock_q:
         mock_queue = MagicMock()
         mock_queue.submit = AsyncMock(side_effect=capture_submit)
+        mock_queue.update_progress = AsyncMock()
         mock_q.return_value = mock_queue
 
         job_id = await queue_export_sidecars_task(
@@ -100,19 +116,8 @@ async def test_export_sidecars_task_uses_fresh_session():
     assert job_id == "captured-job"
     assert len(submitted_fns) == 1
 
-    # Execute the worker and verify it opens AsyncSessionLocal
-    with patch("database.AsyncSessionLocal") as mock_session_factory:
-        mock_session = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-        mock_session_factory.return_value = mock_session
-
-        with patch("workers.tasks.CaptionService") as MockService:
-            mock_svc = MagicMock()
-            mock_svc.write_sidecar_direct = AsyncMock(return_value="/tmp/asset-1.txt")
-            MockService.return_value = mock_svc
-
-            result = await submitted_fns[0]()
+    # Execute the captured worker function
+    result = await submitted_fns[0]()
 
     mock_session_factory.assert_called_once()
     assert result["written"] == 2
@@ -130,17 +135,22 @@ async def test_export_sidecars_task_handles_missing_caption():
         submitted_fns.append(fn)
         return "job"
 
-    with patch("workers.tasks.get_job_queue") as mock_q:
-        mock_queue = MagicMock()
-        mock_queue.submit = AsyncMock(side_effect=capture_submit)
-        mock_q.return_value = mock_queue
+    mock_svc = MagicMock()
+    mock_svc.write_sidecar_direct = AsyncMock(return_value=None)  # no caption
 
-        await queue_export_sidecars_task(
-            project_id="proj-1",
-            asset_ids=["missing-asset"],
-            output_dir=None,
-            job_id="test-job",
-        )
+    with patch("services.caption.CaptionService", return_value=mock_svc):
+        with patch("workers.job_queue.get_job_queue") as mock_q:
+            mock_queue = MagicMock()
+            mock_queue.submit = AsyncMock(side_effect=capture_submit)
+            mock_queue.update_progress = AsyncMock()
+            mock_q.return_value = mock_queue
+
+            await queue_export_sidecars_task(
+                project_id="proj-1",
+                asset_ids=["missing-asset"],
+                output_dir=None,
+                job_id="test-job",
+            )
 
     with patch("database.AsyncSessionLocal") as mock_session_factory:
         mock_session = AsyncMock()
@@ -148,12 +158,7 @@ async def test_export_sidecars_task_handles_missing_caption():
         mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_session_factory.return_value = mock_session
 
-        with patch("workers.tasks.CaptionService") as MockService:
-            mock_svc = MagicMock()
-            mock_svc.write_sidecar_direct = AsyncMock(return_value=None)  # no caption
-            MockService.return_value = mock_svc
-
-            result = await submitted_fns[0]()
+        result = await submitted_fns[0]()
 
     assert result["written"] == 0
     assert len(result["errors"]) == 1

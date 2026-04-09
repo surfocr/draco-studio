@@ -21,15 +21,15 @@ if not defined PY (
   )
 )
 if not defined PY (
-  echo [ERROR] Python 3.10+ is required but not found on PATH.
+  echo [ERROR] Python 3.11+ is required but not found on PATH.
   echo         Install from https://www.python.org/downloads/
   pause
   exit /b 1
 )
 
-"%PY%" -c "import sys; exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+"%PY%" -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Python 3.10 or newer is required.
+  echo [ERROR] Python 3.11 or newer is required.
   pause
   exit /b 1
 )
@@ -63,7 +63,8 @@ if not exist "%VENV_PY%" (
 :: ── Install backend deps ────────────────────────────────────
 if not exist "%VENV%\.deps.ok" (
   echo [SETUP] Installing backend dependencies (first run, may take a few minutes)...
-  "%VENV_PIP%" install --disable-pip-version-check -q -r backend\requirements.txt
+  echo [SETUP]   Please wait - do not close this window.
+  "%VENV_PY%" -m pip install --disable-pip-version-check -r backend\requirements.txt
   if errorlevel 1 (
     echo [ERROR] Backend dependency install failed.
     pause
@@ -78,22 +79,15 @@ if not exist "frontend\node_modules" (
   echo [SETUP] Installing frontend dependencies...
   pushd frontend
   call npm install
-  popd
   if errorlevel 1 (
+    popd
     echo [ERROR] Frontend dependency install failed.
     pause
     exit /b 1
   )
-)
-echo [OK] Frontend dependencies installed
-
-:: ── Build frontend ──────────────────────────────────────────
-if not exist "frontend\dist\index.html" (
-  echo [BUILD] Building frontend...
-  pushd frontend
-  call npx vite build
   popd
 )
+echo [OK] Frontend dependencies installed
 
 :: ── Create data directories ─────────────────────────────────
 if not exist "backend\data\storage" mkdir "backend\data\storage"
@@ -109,15 +103,27 @@ echo   Press Ctrl+C to stop
 echo ============================================================
 echo.
 
-:: Start backend in background
-start "Draco Backend" /min cmd /c "cd /d "%CD%\backend" && "%VENV_PY%" -m uvicorn main:app --host 127.0.0.1 --port 18082"
+:: ── Ensure DEBUG mode for local desktop use ─────────────────
+if not defined DEBUG set "DEBUG=true"
+
+:: Start backend in background — write a temp launcher to avoid nested-quote issues
+set "BACKEND_DIR=%CD%\backend"
+set "BACKEND_PY=%CD%\%VENV%\Scripts\python.exe"
+set "_LAUNCHER=%TEMP%\draco_backend_launch.bat"
+(
+  echo @echo off
+  echo cd /d "%BACKEND_DIR%"
+  echo set "DEBUG=%DEBUG%"
+  echo "%BACKEND_PY%" -m uvicorn main:app --host 127.0.0.1 --port 18082
+) > "%_LAUNCHER%"
+start "Draco Backend" /min cmd /c ""%_LAUNCHER%""
 
 :: Wait a moment for backend to start
 timeout /t 2 /nobreak >nul
 
-:: Start frontend dev server (foreground so user can see output)
+:: Start frontend dev server (foreground, bound to localhost only)
 pushd frontend
-call npx vite --host
+call npx vite --host 127.0.0.1
 popd
 
 :: When frontend is closed, also kill backend

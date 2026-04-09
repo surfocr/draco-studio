@@ -13,8 +13,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 
-# Electron
-out/
+# Build output
 
 # OS
 .DS_Store
@@ -27,8 +26,18 @@ desktop.ini
 *.swp
 *.swo
 
-# Models / large binaries (downloaded at runtime)
-assets/face-api-weights/
-src/renderer/vendor/
+# Large binaries
 *.pdf
 package-lock.json
+
+# Runtime data
+data/
+.logs/
+
+# Python environments & caches
+backend/.venv/
+backend/.uv-cache/
+backend/.pytest_cache/
+
+# Agent / IDE config
+.claude/

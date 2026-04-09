@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_TIMEOUT: int = 120
 
+    # ── LM Studio ─────────────────────────────────────────────────────────────
+    LMSTUDIO_BASE_URL: str = "http://localhost:1234/v1"
+    LMSTUDIO_TIMEOUT: int = 120
+
     # ── InsightFace ───────────────────────────────────────────────────────────
     INSIGHTFACE_MODEL: str = "buffalo_l"
     INSIGHTFACE_DET_THRESH: float = 0.5

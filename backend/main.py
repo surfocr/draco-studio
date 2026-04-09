@@ -3,6 +3,7 @@ FastAPI application entry point.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -64,10 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from api.providers import _get_fernet
         from services.provider_config import apply_all_provider_configs
 
-        try:
-            fernet = _get_fernet()
-        except RuntimeError:
-            fernet = None
+        fernet = _get_fernet()
 
         async with AsyncSessionLocal() as _db:
             applied = await apply_all_provider_configs(_db, fernet=fernet)
@@ -85,7 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     embed_provider = registry.get("embedding", "fastembed")
     if embed_provider:
         try:
-            await embed_provider.load()
+            await asyncio.wait_for(embed_provider.load(), timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("FastEmbed pre-load timed out (>60 s) — will load on first use")
         except Exception as exc:
             logger.warning("Could not pre-load FastEmbed: %s", exc)
 

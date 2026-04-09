@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, CheckCircle, Layers, Loader2, Trash2 } from 'lucide-react'
+import { AlertCircle, CheckCircle, ChevronDown, ChevronRight, Layers, Loader2, Settings, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { duplicatesApi } from '@/hooks/useApi'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -119,6 +119,10 @@ export function Duplicates() {
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<ClusterTypeFilter>('all')
   const [localKeep, setLocalKeep] = useState<Record<string, Record<string, boolean>>>({})
+  const [showThresholds, setShowThresholds] = useState(false)
+  const [phashThreshold, setPhashThreshold] = useState(8)
+  const [embeddingThreshold, setEmbeddingThreshold] = useState(0.95)
+  const [faceThreshold, setFaceThreshold] = useState(0.80)
 
   const { data, isLoading, error } = useQuery<DuplicatesResponse>({
     queryKey: ['duplicates', activeProject?.id],
@@ -139,7 +143,12 @@ export function Duplicates() {
   })
 
   const scanMutation = useMutation({
-    mutationFn: () => duplicatesApi.scan(activeProject!.id),
+    mutationFn: () =>
+      duplicatesApi.scan(activeProject!.id, {
+        phash_threshold: phashThreshold,
+        embedding_threshold: embeddingThreshold,
+        face_threshold: faceThreshold,
+      }),
     onSuccess: (result) => {
       addJob({
         id: result.job_id,
@@ -257,6 +266,77 @@ export function Duplicates() {
           >
             {scanMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : 'Scan for duplicates'}
           </button>
+
+          <button
+            onClick={() => setShowThresholds(!showThresholds)}
+            className="mt-1.5 flex w-full items-center gap-1 text-xs text-text-secondary hover:text-text-primary"
+          >
+            {showThresholds ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <Settings size={12} />
+            Thresholds
+          </button>
+
+          {showThresholds && (
+            <div className="mt-1.5 space-y-2 rounded border border-border bg-surface-elevated p-2 text-xs">
+              <label className="block">
+                <span className="flex justify-between text-text-secondary">
+                  <span>pHash distance</span>
+                  <span className="font-mono">{phashThreshold}</span>
+                </span>
+                <input
+                  type="range"
+                  min={2}
+                  max={20}
+                  step={1}
+                  value={phashThreshold}
+                  onChange={(e) => setPhashThreshold(Number(e.target.value))}
+                  className="mt-0.5 w-full accent-accent"
+                />
+                <span className="flex justify-between text-[10px] text-text-secondary/60">
+                  <span>Strict</span>
+                  <span>Loose</span>
+                </span>
+              </label>
+              <label className="block">
+                <span className="flex justify-between text-text-secondary">
+                  <span>Embed similarity</span>
+                  <span className="font-mono">{embeddingThreshold.toFixed(2)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={0.7}
+                  max={1.0}
+                  step={0.01}
+                  value={embeddingThreshold}
+                  onChange={(e) => setEmbeddingThreshold(Number(e.target.value))}
+                  className="mt-0.5 w-full accent-accent"
+                />
+                <span className="flex justify-between text-[10px] text-text-secondary/60">
+                  <span>Loose</span>
+                  <span>Strict</span>
+                </span>
+              </label>
+              <label className="block">
+                <span className="flex justify-between text-text-secondary">
+                  <span>Face similarity</span>
+                  <span className="font-mono">{faceThreshold.toFixed(2)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={1.0}
+                  step={0.01}
+                  value={faceThreshold}
+                  onChange={(e) => setFaceThreshold(Number(e.target.value))}
+                  className="mt-0.5 w-full accent-accent"
+                />
+                <span className="flex justify-between text-[10px] text-text-secondary/60">
+                  <span>Loose</span>
+                  <span>Strict</span>
+                </span>
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-1 border-b border-border px-3 py-2">

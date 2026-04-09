@@ -21,19 +21,19 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
         "label": "Captioning",
         "provider_type": "caption",
         "description": "Primary image caption generation for training captions.",
-        "defaults": ["ollama", "joycaption", "gemini", "openai", "moondream"],
+        "defaults": ["ollama", "lmstudio", "joycaption", "gemini", "openai", "moondream"],
     },
     "ranking_explanation": {
         "label": "Ranking Explanations",
         "provider_type": "caption",
         "description": "Vision-language model for pairwise ranking explanations and AI judging.",
-        "defaults": ["gemini", "ollama", "openai", "qwen_vl", "moondream"],
+        "defaults": ["gemini", "ollama", "lmstudio", "openai", "qwen_vl", "moondream"],
     },
     "dataset_coach": {
         "label": "Dataset Coach",
         "provider_type": "caption",
         "description": "Vision-language model for project-level coaching and QA guidance.",
-        "defaults": ["gemini", "ollama", "openai", "qwen_vl", "moondream"],
+        "defaults": ["gemini", "ollama", "lmstudio", "openai", "qwen_vl", "moondream"],
     },
     "embedding": {
         "label": "Embeddings",
@@ -45,7 +45,7 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
         "label": "Face Detection",
         "provider_type": "face_detection",
         "description": "Face detection and face embedding extraction.",
-        "defaults": ["insightface", "deepface"],
+        "defaults": ["insightface"],
     },
     "scene_understanding": {
         "label": "Scene Understanding",

@@ -584,8 +584,15 @@ export const duplicatesApi = {
   list: (projectId: string) =>
     api.get<DuplicatesResponse>(`/api/projects/${projectId}/duplicates`).then((r) => r.data),
 
-  scan: (projectId: string) =>
-    api.post<{ job_id: string }>(`/api/projects/${projectId}/duplicates/scan`).then((r) => r.data),
+  scan: (
+    projectId: string,
+    thresholds?: { phash_threshold?: number; embedding_threshold?: number; face_threshold?: number }
+  ) =>
+    api
+      .post<{ job_id: string }>(`/api/projects/${projectId}/duplicates/scan`, null, {
+        params: thresholds,
+      })
+      .then((r) => r.data),
 
   bulkDelete: (ids: string[]) =>
     api.post('/api/assets/bulk-delete', { ids }).then((r) => r.data),

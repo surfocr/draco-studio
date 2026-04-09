@@ -45,7 +45,7 @@ async def find_duplicates(
 
     # Load all assets for the project
     result = await db.execute(
-        select(Asset).where(Asset.project_id == project_id, Asset.is_rejected == False)
+        select(Asset).where(Asset.project_id == project_id, Asset.is_rejected.is_(False))
     )
     assets = result.scalars().all()
 
@@ -295,7 +295,7 @@ async def _find_face_embedding_duplicates(
     client = embed_provider._qdrant
     collection = settings.QDRANT_FACE_COLLECTION
     asset_ids = {asset.id for asset in candidate_assets}
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _collection_exists() -> bool:
         existing = [c.name for c in client.get_collections().collections]

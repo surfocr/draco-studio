@@ -100,7 +100,14 @@ async def test_save_api_key_rejects_blank_values(client):
     assert response.json()["detail"] == "API key must not be empty"
 
 
-def test_get_fernet_reports_missing_cryptography(monkeypatch):
+def test_get_fernet_reports_missing_cryptography(monkeypatch, caplog):
+    """When `cryptography` is unavailable, _get_fernet returns None and logs a warning.
+
+    Encrypted API key storage degrades gracefully rather than crashing the server —
+    callers must handle the None sentinel and surface a user-facing error.
+    """
+    import logging
+
     from api import providers as providers_api
 
     real_import = builtins.__import__
@@ -113,8 +120,11 @@ def test_get_fernet_reports_missing_cryptography(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     monkeypatch.setenv("DRACO_SECRET_KEY", "test-secret")
 
-    with pytest.raises(RuntimeError, match="cryptography"):
-        providers_api._get_fernet()
+    with caplog.at_level(logging.WARNING, logger="api.providers"):
+        result = providers_api._get_fernet()
+
+    assert result is None
+    assert any("cryptography" in rec.message for rec in caplog.records)
 
 
 def test_caption_result_supports_provider_errors():

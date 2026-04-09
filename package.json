@@ -1,8 +1,7 @@
 {
   "name": "draco-dataset-studio",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "description": "AI-powered dataset curation platform for LoRA training",
-  "main": "src/main/main.js",
   "scripts": {
     "start": "python scripts/run_local_app.py",
     "start:win": "run-portable.bat",
@@ -16,56 +15,11 @@
     "build:frontend": "npm --prefix frontend run build",
     "test:frontend": "npm --prefix frontend run test -- --run",
     "lint:frontend": "npm --prefix frontend run lint",
-    "desktop:start": "node scripts/desktop_entry.js start",
-    "desktop:dev": "node scripts/desktop_entry.js dev",
-    "desktop:build": "node scripts/desktop_entry.js build",
-    "desktop:build:win": "node scripts/desktop_entry.js build:win",
     "postinstall": "echo Dependencies installed"
   },
   "author": "Draco Studio",
   "license": "MIT",
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "electron": "^35.7.5",
-    "electron-builder": "^26.5.0"
-  },
-  "dependencies": {
-    "sql.js": "^1.11.0"
-  },
-  "build": {
-    "appId": "com.draco.dataset-studio",
-    "productName": "Draco Dataset Studio",
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "icon": "assets/icon.ico"
-    },
-    "files": [
-      "src/**/*",
-      "DRACO_Dataset_Studio_v4.html",
-      "DRACO_Dataset_Studio_v5.html",
-      "python/**/*",
-      "assets/**/*",
-      "node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "python/",
-        "to": "python/",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "assets/face-api-weights/",
-        "to": "face-api-weights/",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "asar": true
+    "concurrently": "^9.2.1"
   }
 }

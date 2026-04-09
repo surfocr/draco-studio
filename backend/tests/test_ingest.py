@@ -14,6 +14,7 @@ from models.asset import Asset
 from models.caption import CaptionVersion
 from models.project import Project
 from providers.registry import get_registry
+from providers.storage.local import LocalStorageProvider
 from services.ingest import IngestSource, ingest_directory, ingest_files
 
 def _png_bytes() -> bytes:
@@ -31,6 +32,7 @@ def storage_env(tmp_path, monkeypatch):
 
     registry = get_registry()
     registry._instances.clear()
+    registry.register("storage", "local", LocalStorageProvider)
     yield tmp_path
     registry._instances.clear()
 
@@ -49,13 +51,14 @@ def _write_png(path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_ingest_upload_returns_job_id(client):
+    import uuid as _uuid
     r = await client.post("/api/projects", json={"name": "test-ingest", "description": ""})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 201, r.text
     project_id = r.json()["id"]
 
     with patch("workers.job_queue.get_job_queue") as mock_q:
         mock_queue = MagicMock()
-        mock_queue.submit = AsyncMock(return_value="test-job-123")
+        mock_queue.submit = AsyncMock(return_value="ignored-submit-return")
         mock_q.return_value = mock_queue
 
         r = await client.post(
@@ -66,14 +69,16 @@ async def test_ingest_upload_returns_job_id(client):
 
     assert r.status_code == 202, r.text
     body = r.json()
-    assert body["job_id"] == "test-job-123"
+    # API generates its own job_id (UUID) and passes it to queue.submit.
+    _uuid.UUID(body["job_id"])  # raises if not a valid UUID
     assert body["file_count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_ingest_dir_returns_job_id(client, storage_env):
+    import uuid as _uuid
     r = await client.post("/api/projects", json={"name": "test-ingest-dir", "description": ""})
-    assert r.status_code == 200
+    assert r.status_code == 201
     project_id = r.json()["id"]
 
     ingest_dir_path = settings.data_dir / "ingest-dir-test"
@@ -81,7 +86,7 @@ async def test_ingest_dir_returns_job_id(client, storage_env):
 
     with patch("workers.job_queue.get_job_queue") as mock_q:
         mock_queue = MagicMock()
-        mock_queue.submit = AsyncMock(return_value="test-job-456")
+        mock_queue.submit = AsyncMock(return_value="ignored-submit-return")
         mock_q.return_value = mock_queue
 
         r = await client.post(
@@ -91,7 +96,7 @@ async def test_ingest_dir_returns_job_id(client, storage_env):
 
     assert r.status_code == 202, r.text
     body = r.json()
-    assert body["job_id"] == "test-job-456"
+    _uuid.UUID(body["job_id"])  # raises if not a valid UUID
     assert body["directory"] == str(ingest_dir_path)
 
 

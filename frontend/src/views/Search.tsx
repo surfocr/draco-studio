@@ -5,7 +5,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { searchApi } from '@/hooks/useApi'
 
 interface SearchResult {
-  id: number
+  id: string
   filename: string
   thumbnail_url?: string
   composite_score?: number

@@ -15,6 +15,7 @@ services:
       - DATA_DIR=/app/data
       - HOST=0.0.0.0
       - PORT=18082
+      - DEBUG=true
       - ALLOW_REMOTE_ACCESS=true
     volumes:
       - ./data:/app/data

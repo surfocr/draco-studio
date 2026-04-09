@@ -40,7 +40,7 @@ interface AssetState {
 
 const DEFAULT_FILTERS: AssetFilters = {}
 
-export const useAssetStore = create<AssetState>()((set, get) => ({
+export const useAssetStore = create<AssetState>()((set, _get) => ({
   assets: [],
   total: 0,
   page: 1,

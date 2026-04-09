@@ -4,19 +4,9 @@ Draco Dataset Studio is a local-first dataset curation platform for LoRA trainin
 
 This repo contains:
 
-- an Electron shell
-- a React + TypeScript frontend
-- a FastAPI backend
+- a React + TypeScript frontend (Vite)
+- a FastAPI backend (Python 3.11+)
 - provider-based AI/ML integrations for captioning, embeddings, face analysis, ranking, export, and augmentation
-
-## What This Pass Added
-
-- Project-level runtime configuration via `ProjectRuntimeConfig`
-- Project-aware provider resolution instead of hardcoded core-provider selection
-- Task-specific provider and model settings in the Settings UI
-- Startup hydration for saved provider config, not just encrypted API keys
-- Provider config inspection endpoint
-- Compatibility health route at `/api/health`
 
 ## Core Features
 
@@ -38,7 +28,7 @@ This repo contains:
 - ORM models: `backend/models/`
 - Alembic migrations: `backend/alembic/versions/`
 
-Runtime/provider design is documented in [ARCHITECTURE.md](/C:/Users/zackb/Downloads/draco_studio/ARCHITECTURE.md).
+Runtime/provider design: see `backend/providers/` and `backend/services/runtime_config.py`.
 
 ## Project Runtime Configuration
 
@@ -117,7 +107,9 @@ cd ..
 For the backend:
 
 ```bash
-pip install -r backend/requirements-dev.txt
+cd backend
+pip install -r requirements-dev.txt
+cd ..
 ```
 
 ### 2. Create environment files
@@ -147,7 +139,7 @@ npm start
 
 Fastest Windows 11 path:
 
-- double-click [run-portable.bat](/C:/Users/zackb/Downloads/draco_studio/run-portable.bat)
+- double-click [run-portable.bat](run-portable.bat)
 - or run:
 
 ```bash
@@ -203,35 +195,11 @@ cd backend
 alembic upgrade head
 ```
 
-The backend Docker image now runs `alembic upgrade head` before starting Uvicorn.
+The Docker Compose stack sets `DEBUG=true` by default, which auto-creates the schema on startup.
 
 ### Desktop shell
 
-The Electron shell in the repo root is still a legacy surface and is blocked by default so we do not accidentally ship or test the wrong app.
-
-Supported development uses the web app:
-
-```bash
-npm run dev
-```
-
-Supported production-style frontend build:
-
-```bash
-npm run build
-```
-
-If you intentionally need the legacy Electron shell for compatibility work, opt in explicitly:
-
-```bash
-ENABLE_LEGACY_DESKTOP=1 npm run desktop:dev
-```
-
-Legacy desktop packaging is also opt-in:
-
-```bash
-ENABLE_LEGACY_DESKTOP=1 npm run desktop:build
-```
+The legacy Electron shell has been archived to `_legacy/`. The supported app is the web frontend + local backend.
 
 ## Safe Startup Defaults
 
@@ -309,7 +277,6 @@ Useful repo-root commands:
 - `npm run test:frontend` - run frontend Vitest suite once
 - `npm run build:frontend` - run frontend typecheck and production build
 - `npm run lint:frontend` - run frontend linting
-- `npm run desktop:dev` - run the legacy Electron shell only when `ENABLE_LEGACY_DESKTOP=1`
 
 ## Tests
 
@@ -332,14 +299,6 @@ npm run build:frontend
 ```
 
 ## Provenance / Third-Party Reuse
-
-This pass focused on making Draco ready for safe project-aware provider integration rather than vendoring large external repos wholesale.
-
-Repo evaluation and recommended reuse decisions are documented in:
-
-- [AUDIT.md](/C:/Users/zackb/Downloads/draco_studio/AUDIT.md)
-- [MODEL_PROVIDER_MATRIX.md](/C:/Users/zackb/Downloads/draco_studio/MODEL_PROVIDER_MATRIX.md)
-- [ROADMAP.md](/C:/Users/zackb/Downloads/draco_studio/ROADMAP.md)
 
 Any future vendored code should include:
 

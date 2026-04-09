@@ -600,6 +600,7 @@ function PerformanceSection() {
         <Sliders size={15} />
         Performance
       </SectionTitle>
+      <p className="text-xs text-gray-500 mb-3">These are configured server-side via environment variables (MAX_WORKERS, VRAM_BUDGET_MB, THUMBNAIL_SIZE).</p>
       <div className="space-y-4">
         <div>
           <label className={labelCls}>Max Workers</label>

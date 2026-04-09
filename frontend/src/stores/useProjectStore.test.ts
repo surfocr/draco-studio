@@ -73,7 +73,7 @@ describe('useProjectStore', () => {
   })
 
   it('persists only the active project selection, not the full project list', () => {
-    const storage = globalThis.localStorage as ReturnType<typeof createStorage>
+    const storage = globalThis.localStorage as unknown as ReturnType<typeof createStorage>
     useProjectStore.getState().setProjects([projectA, projectB])
     useProjectStore.getState().setActiveProject('project-b')
 

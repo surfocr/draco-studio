@@ -147,14 +147,14 @@ function invalidateQueriesForJobCompletion(queryClient: QueryClient, job: Job) {
     return
   }
 
-  if (job.type.startsWith('export_')) {
-    queryClient.invalidateQueries({ queryKey: ['export-validation'] })
-    return
-  }
-
   if (job.type === 'caption' || job.type === 'export_sidecars') {
     queryClient.invalidateQueries({ queryKey: ['caption-assets'] })
     queryClient.invalidateQueries({ queryKey: ['captions'] })
+    return
+  }
+
+  if (job.type.startsWith('export_')) {
+    queryClient.invalidateQueries({ queryKey: ['export-validation'] })
     return
   }
 
@@ -221,15 +221,20 @@ function formatJobSuccessMessage(job: Job): string {
 
 function JobPoller() {
   const setJobs = useJobStore((s) => s.setJobs)
+  const activeJobIds = useJobStore((s) => s.activeJobIds)
   const queryClient = useQueryClient()
   const toast = useToast()
   const previousJobsRef = useRef<Record<string, Job>>({})
   const lastPollErrorRef = useRef<string | null>(null)
 
+  // Poll fast (2s) when jobs are active, slow (15s) when idle
+  const hasActiveJobs = activeJobIds.length > 0
+  const pollInterval = hasActiveJobs ? 2000 : 15000
+
   const { data, error } = useQuery({
     queryKey: ['jobs-poll'],
     queryFn: jobsApi.list,
-    refetchInterval: 3000,
+    refetchInterval: pollInterval,
   })
 
   useEffect(() => {

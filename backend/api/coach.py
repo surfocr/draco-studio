@@ -98,9 +98,18 @@ async def apply_coach_action(
     """
     from models.asset import Asset
 
-    valid_actions = {"remove_low_quality", "remove_exact_duplicates", "normalize_captions"}
+    valid_actions = {
+        "remove_low_quality",
+        "remove_exact_duplicates",
+        "normalize_captions",
+        "approve_high_quality",
+        "reject_by_ids",
+        "flag_multi_face",
+        "flag_no_caption",
+        "flag_blurry",
+    }
     if action not in valid_actions:
-        raise HTTPException(status_code=400, detail=f"Unknown action '{action}'. Valid: {', '.join(valid_actions)}")
+        raise HTTPException(status_code=400, detail=f"Unknown action '{action}'. Valid: {', '.join(sorted(valid_actions))}")
 
     from models.project import Project
     project = await db.get(Project, project_id)
@@ -200,6 +209,106 @@ async def apply_coach_action(
         await db.commit()
         _invalidate_project_cache(project_id)
 
+    elif action == "approve_high_quality":
+        # Approve assets above a quality threshold (default: top-tier composite_score)
+        if not body.asset_ids:
+            raise HTTPException(status_code=400, detail="asset_ids required")
+        result = await db.execute(
+            select(Asset).where(
+                Asset.project_id == project_id,
+                Asset.id.in_(body.asset_ids),
+                Asset.is_rejected.is_(False),
+            )
+        )
+        assets = result.scalars().all()
+        for a in assets:
+            if a.review_state != "approved":
+                await AssetStateService.approve_asset(a, db)
+                affected += 1
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
+        await db.commit()
+        _invalidate_project_cache(project_id)
+
+    elif action == "reject_by_ids":
+        if not body.asset_ids:
+            raise HTTPException(status_code=400, detail="asset_ids required")
+        result = await db.execute(
+            select(Asset).where(
+                Asset.project_id == project_id,
+                Asset.id.in_(body.asset_ids),
+            )
+        )
+        assets = result.scalars().all()
+        for a in assets:
+            if not a.is_rejected:
+                await AssetStateService.reject_asset(
+                    a, db,
+                    rejection_reason=f"Rejected by dataset coach: {action}",
+                )
+                affected += 1
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
+        await db.commit()
+        _invalidate_project_cache(project_id)
+
+    elif action == "flag_multi_face":
+        if not body.asset_ids:
+            raise HTTPException(status_code=400, detail="asset_ids required")
+        result = await db.execute(
+            select(Asset).where(
+                Asset.project_id == project_id,
+                Asset.id.in_(body.asset_ids),
+            )
+        )
+        assets = result.scalars().all()
+        for a in assets:
+            if not a.is_flagged:
+                await AssetStateService.flag_asset(a, db)
+                affected += 1
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
+        await db.commit()
+        _invalidate_project_cache(project_id)
+
+    elif action == "flag_no_caption":
+        if not body.asset_ids:
+            raise HTTPException(status_code=400, detail="asset_ids required")
+        result = await db.execute(
+            select(Asset).where(
+                Asset.project_id == project_id,
+                Asset.id.in_(body.asset_ids),
+            )
+        )
+        assets = result.scalars().all()
+        for a in assets:
+            if not a.is_flagged:
+                await AssetStateService.flag_asset(a, db)
+                affected += 1
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
+        await db.commit()
+        _invalidate_project_cache(project_id)
+
+    elif action == "flag_blurry":
+        if not body.asset_ids:
+            raise HTTPException(status_code=400, detail="asset_ids required")
+        result = await db.execute(
+            select(Asset).where(
+                Asset.project_id == project_id,
+                Asset.id.in_(body.asset_ids),
+            )
+        )
+        assets = result.scalars().all()
+        for a in assets:
+            if not a.is_flagged:
+                await AssetStateService.flag_asset(a, db)
+                affected += 1
+        if affected:
+            await AssetStateService.sync_project_counters(project_id, db)
+        await db.commit()
+        _invalidate_project_cache(project_id)
+
     return {"affected": affected, "action": action}
 
 
@@ -256,3 +365,79 @@ async def get_remove_candidates(
     ]
 
     return {"items": items, "total": total}
+
+
+@router.get("/{project_id}/coach/next-best")
+async def get_next_best(
+    project_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    count: int = Query(default=10, ge=1, le=200, description="Number of next-best images to suggest"),
+    require_caption: bool = Query(default=False, description="Only suggest captioned images"),
+    require_single_face: bool = Query(default=False, description="Only suggest images with exactly 1 face"),
+    min_score: float = Query(default=0.0, ge=0.0, le=1.0, description="Minimum composite score"),
+) -> dict:
+    """Suggest the next-best images to add to the curated dataset.
+
+    Selects from pending/reviewed (not yet approved/rejected) assets,
+    ranked by composite_score descending, with optional filters for
+    caption presence, face count, and minimum quality.
+    """
+    from models.asset import Asset
+    from models.project import Project
+
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    conditions = [
+        Asset.project_id == project_id,
+        Asset.is_rejected.is_(False),
+        Asset.review_state.in_(["pending", "reviewed"]),
+    ]
+    if require_caption:
+        conditions.append(Asset.active_caption_id.isnot(None))
+    if require_single_face:
+        conditions.append(Asset.face_count == 1)
+    if min_score > 0:
+        conditions.append(Asset.composite_score >= min_score)
+
+    result = await db.execute(
+        select(Asset).where(*conditions)
+    )
+    candidates = result.scalars().all()
+
+    # Score: composite_score + diversity bonus (penalize duplicates)
+    def _rank_key(a: Asset) -> float:
+        score = a.composite_score or 0.0
+        # Penalize duplicates
+        if a.duplicate_cluster_id:
+            score -= 0.2
+        # Boost analyzed assets
+        if a.analyzed_at:
+            score += 0.05
+        return score
+
+    ranked = sorted(candidates, key=_rank_key, reverse=True)[:count]
+
+    items = [
+        {
+            "id": a.id,
+            "filename": a.filename,
+            "filepath": a.filepath,
+            "composite_score": a.composite_score,
+            "technical_quality": a.technical_quality,
+            "training_usefulness": a.training_usefulness,
+            "face_count": a.face_count,
+            "shot_type": a.shot_type,
+            "review_state": a.review_state,
+            "has_caption": a.active_caption_id is not None,
+            "thumbnail_path": a.thumbnail_path,
+        }
+        for a in ranked
+    ]
+
+    return {
+        "items": items,
+        "total_candidates": len(candidates),
+        "suggested": len(items),
+    }

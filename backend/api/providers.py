@@ -23,21 +23,49 @@ _SECRET_CONFIG_KEYS = {"api_key", "token", "access_token", "secret", "client_sec
 
 
 def _get_fernet():
-    """Return a Fernet instance keyed from DRACO_SECRET_KEY."""
+    """Return a Fernet instance keyed from DRACO_SECRET_KEY.
+
+    Auto-generates and persists a key in .env if one is not set,
+    so first-run users never hit a crash.
+    """
     try:
         from cryptography.fernet import Fernet
-    except ImportError as exc:
-        raise RuntimeError(
-            "The optional 'cryptography' package is not installed, so encrypted API key storage is unavailable. "
-            "Install backend dependencies from backend/requirements-dev.txt to enable API key storage."
-        ) from exc
+    except ImportError:
+        logger.warning(
+            "cryptography package not installed — encrypted API key storage unavailable. "
+            "Install it via: pip install cryptography"
+        )
+        return None
 
     raw = os.environ.get("DRACO_SECRET_KEY")
     if not raw:
-        raise RuntimeError(
-            "DRACO_SECRET_KEY environment variable is not set. "
-            "Set it to a non-empty secret string to enable provider API key storage."
-        )
+        # Auto-generate a secret key and persist it to .env
+        import secrets
+        from pathlib import Path
+
+        raw = secrets.token_urlsafe(32)
+        os.environ["DRACO_SECRET_KEY"] = raw
+
+        # Try to write it to the .env next to the backend dir
+        env_candidates = [
+            Path(__file__).resolve().parent.parent / ".env",  # repo root
+            Path(__file__).resolve().parent / ".env",          # backend dir
+        ]
+        for env_path in env_candidates:
+            try:
+                existing = ""
+                if env_path.exists():
+                    existing = env_path.read_text(encoding="utf-8")
+                if "DRACO_SECRET_KEY" not in existing:
+                    with open(env_path, "a", encoding="utf-8") as f:
+                        if existing and not existing.endswith("\n"):
+                            f.write("\n")
+                        f.write(f"DRACO_SECRET_KEY={raw}\n")
+                    logger.info("Auto-generated DRACO_SECRET_KEY and saved to %s", env_path)
+                break
+            except OSError:
+                continue
+
     key = base64.urlsafe_b64encode(raw.encode()[:32].ljust(32, b"\x00"))
     return Fernet(key)
 
@@ -147,10 +175,7 @@ async def save_provider_config(
         db.add(row)
     await db.flush()
 
-    try:
-        fernet = _get_fernet()
-    except RuntimeError:
-        fernet = None
+    fernet = _get_fernet()
     apply_provider_config_row(row, fernet=fernet)
 
     return {"status": "saved", "provider_type": provider_type, "provider_name": provider_name}
@@ -166,12 +191,11 @@ async def save_api_key(
     if not api_key:
         raise HTTPException(status_code=400, detail="API key must not be empty")
 
-    try:
-        fernet = _get_fernet()
-    except RuntimeError as exc:
+    fernet = _get_fernet()
+    if fernet is None:
         raise HTTPException(
             status_code=503,
-            detail=str(exc),
+            detail="Encryption is not available. Install the 'cryptography' package to enable API key storage.",
         )
     encrypted = fernet.encrypt(api_key.encode()).decode()
 

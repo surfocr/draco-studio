@@ -74,8 +74,32 @@ def _asset_payload(asset: Asset, *, keep: bool, score: float) -> DuplicateImageR
     "/projects/{project_id}/duplicates/scan",
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def scan_duplicates(project_id: str) -> dict:
-    job_id = await queue_duplicate_scan(project_id)
+async def scan_duplicates(
+    project_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    phash_threshold: int | None = None,
+    embedding_threshold: float | None = None,
+    face_threshold: float | None = None,
+) -> dict:
+    from models.preferences import UserPreferences
+
+    # Use explicit params if provided, else fall back to stored preferences
+    prefs = await db.get(UserPreferences, 1)
+    _phash = phash_threshold if phash_threshold is not None else (
+        prefs.duplicate_phash_threshold if prefs else 8
+    )
+    _embed = embedding_threshold if embedding_threshold is not None else (
+        prefs.duplicate_embedding_threshold if prefs else 0.95
+    )
+    _face = face_threshold if face_threshold is not None else (
+        prefs.duplicate_face_threshold if prefs else 0.80
+    )
+    job_id = await queue_duplicate_scan(
+        project_id,
+        phash_threshold=_phash,
+        embedding_threshold=_embed,
+        face_threshold=_face,
+    )
     return {"job_id": job_id}
 
 

@@ -37,7 +37,7 @@ interface FileSystemDirectoryEntry extends FileSystemEntry {
   }
 }
 
-interface DataTransferItemWithEntry extends DataTransferItem {
+interface DataTransferItemWithEntry extends Omit<DataTransferItem, 'webkitGetAsEntry'> {
   webkitGetAsEntry?: () => FileSystemEntry | null
 }
 
@@ -91,13 +91,16 @@ export function DropZone({ onFiles, className, children, disabled }: DropZonePro
       if (disabled) return
 
       const dataTransferItems = Array.from(e.dataTransfer.items ?? []) as DataTransferItemWithEntry[]
-      const entryResults = await Promise.all(
-        dataTransferItems
-          .map((item) => item.webkitGetAsEntry?.())
-          .filter((entry): entry is FileSystemEntry => !!entry)
-          .map((entry) => readDroppedEntry(entry))
+      const entryPromises = dataTransferItems
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.webkitGetAsEntry?.())
+        .filter((entry): entry is FileSystemEntry => !!entry)
+        .map((entry) => readDroppedEntry(entry))
+
+      const entrySettled = await Promise.allSettled(entryPromises)
+      const droppedCandidates = entrySettled.flatMap((result) =>
+        result.status === 'fulfilled' ? result.value : []
       )
-      const droppedCandidates = entryResults.flat()
 
       if (droppedCandidates.length > 0) {
         onFiles(droppedCandidates)

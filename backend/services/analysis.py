@@ -45,7 +45,7 @@ async def _upsert_face_embeddings(
     collection = settings.QDRANT_FACE_COLLECTION
 
     # Ensure face collection exists
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _ensure() -> None:
         existing = [c.name for c in client.get_collections().collections]

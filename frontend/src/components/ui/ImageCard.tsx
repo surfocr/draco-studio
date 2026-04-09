@@ -142,7 +142,7 @@ export const ImageCard = React.memo(function ImageCard({
 
       {/* Duplicate badge */}
       {asset.duplicate_cluster_id && (
-        <div className="absolute top-2 right-2 badge badge-yellow text-[10px]">
+        <div className="absolute top-2 right-2 badge badge-yellow text-[10px]" style={statusBadge ? { top: '2rem' } : undefined}>
           <Copy size={9} className="mr-1" />
           Dup
         </div>

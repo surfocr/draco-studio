@@ -214,7 +214,7 @@ const labelCls = 'block text-xs font-medium text-[var(--text-secondary)] mb-1 up
 // ── Tab 1: LoRA ────────────────────────────────────────────────────────────────
 
 function LoraTab({
-  validation,
+  validation: _validation,
   onExportStart,
 }: {
   validation: ExportValidation | undefined
@@ -225,8 +225,13 @@ function LoraTab({
   const { success, error: toastError } = useToast()
   const selectedAssetIds = Array.from(selectedIds)
 
-  const [triggerWord, setTriggerWord] = useState(activeProject?.trigger_word ?? '')
-  const [repeats, setRepeats] = useState(10)
+  const [triggerWord, setTriggerWord] = useState(() => {
+    return activeProject?.trigger_word
+      || ((() => { try { return JSON.parse(localStorage.getItem('draco_setting_default_trigger_word') ?? '""') } catch { return '' } })())
+  })
+  const [repeats, setRepeats] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('draco_setting_default_repeats') ?? '10') } catch { return 10 }
+  })
   const [captionStyle, setCaptionStyle] = useState('active')
   const [onlyCaptioned, setOnlyCaptioned] = useState(true)
   const [onlyApproved, setOnlyApproved] = useState(false)
@@ -490,8 +495,13 @@ function KohyaTab({
   const { success, error: toastError } = useToast()
   const selectedAssetIds = Array.from(selectedIds)
 
-  const [triggerWord, setTriggerWord] = useState(activeProject?.trigger_word ?? '')
-  const [repeats, setRepeats] = useState(10)
+  const [triggerWord, setTriggerWord] = useState(() => {
+    return activeProject?.trigger_word
+      || ((() => { try { return JSON.parse(localStorage.getItem('draco_setting_default_trigger_word') ?? '""') } catch { return '' } })())
+  })
+  const [repeats, setRepeats] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('draco_setting_default_repeats') ?? '10') } catch { return 10 }
+  })
   const [datasetName, setDatasetName] = useState('')
   const [modelType, setModelType] = useState('sdxl')
   const [learningRate, setLearningRate] = useState('0.0001')

@@ -89,38 +89,48 @@ async def test_list_pending_results_filters_by_project(db):
 
 @pytest.mark.asyncio
 async def test_augmentation_preview_endpoint_serves_result_file(client, db, tmp_path):
+    from config import settings
     project = await _create_project(db, "preview")
     asset = await _create_asset(db, project.id, "source.png")
-    output = tmp_path / "preview.png"
+    # Write output inside STORAGE_PATH so path traversal check passes
+    storage = Path(settings.STORAGE_PATH)
+    storage.mkdir(parents=True, exist_ok=True)
+    output = storage / "test_preview.png"
     output.write_bytes(b"fake-image")
-    job = AugmentationJob(
-        project_id=project.id,
-        source_asset_id=asset.id,
-        augmentation_type="outpaint",
-        provider="basic_editor",
-        status="pending_review",
-        output_path=str(output),
-    )
-    db.add(job)
-    await db.commit()
+    try:
+        job = AugmentationJob(
+            project_id=project.id,
+            source_asset_id=asset.id,
+            augmentation_type="outpaint",
+            provider="basic_editor",
+            status="pending_review",
+            output_path=str(output),
+        )
+        db.add(job)
+        await db.commit()
 
-    response = await client.get(f"/api/augmentation/preview/{job.id}")
+        response = await client.get(f"/api/augmentation/preview/{job.id}")
 
-    assert response.status_code == 200
-    assert response.content == b"fake-image"
+        assert response.status_code == 200
+        assert response.content == b"fake-image"
+    finally:
+        output.unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio
 async def test_augmentation_preview_endpoint_404s_for_missing_file(client, db):
+    from config import settings
     project = await _create_project(db, "missing-preview")
     asset = await _create_asset(db, project.id, "source.png")
+    # Use a path inside STORAGE_PATH that doesn't exist on disk
+    missing = Path(settings.STORAGE_PATH) / "definitely_missing_file.png"
     job = AugmentationJob(
         project_id=project.id,
         source_asset_id=asset.id,
         augmentation_type="outpaint",
         provider="basic_editor",
         status="pending_review",
-        output_path=str(Path("C:/definitely/missing/file.png")),
+        output_path=str(missing),
     )
     db.add(job)
     await db.commit()

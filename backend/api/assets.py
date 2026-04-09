@@ -4,6 +4,7 @@ Assets router — CRUD, ingest, thumbnails, streaming originals.
 from __future__ import annotations
 
 import logging
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -354,39 +355,49 @@ async def ingest_upload(
     # Save uploaded files to temp dir using unique paths to prevent collision
     # when multiple files share the same basename.
     tmp_dir = tempfile.mkdtemp(prefix="draco_ingest_")
-    pending_images: list[dict[str, str]] = []
-    sidecars: dict[tuple[str, str], str] = {}
-    for upload in files:
-        original_name = upload.filename or "unknown"
-        suffix = Path(original_name).suffix
-        relative_parent = Path(original_name).parent.as_posix()
-        stem = Path(original_name).stem
-        content = await upload.read()
+    try:
+        pending_images: list[dict[str, str]] = []
+        sidecars: dict[tuple[str, str], str] = {}
+        for upload in files:
+            original_name = upload.filename or "unknown"
+            suffix = Path(original_name).suffix
+            relative_parent = Path(original_name).parent.as_posix()
+            stem = Path(original_name).stem
+            content = await upload.read()
 
-        if suffix.lower() == ".txt":
-            sidecars[(relative_parent, stem)] = content.decode("utf-8", errors="replace").strip()
-            continue
+            if suffix.lower() == ".txt":
+                sidecars[(relative_parent, stem)] = content.decode("utf-8", errors="replace").strip()
+                continue
 
-        unique_name = f"{uuid.uuid4().hex}{suffix}"
-        tmp_path = Path(tmp_dir) / unique_name
-        tmp_path.write_bytes(content)
-        pending_images.append(
-            {
-                "temp_path": str(tmp_path),
-                "original_name": Path(original_name).name,
-                "parent": relative_parent,
-                "stem": stem,
-            }
-        )
+            unique_name = f"{uuid.uuid4().hex}{suffix}"
+            tmp_path = Path(tmp_dir) / unique_name
+            tmp_path.write_bytes(content)
+            pending_images.append(
+                {
+                    "temp_path": str(tmp_path),
+                    "original_name": Path(original_name).name,
+                    "parent": relative_parent,
+                    "stem": stem,
+                }
+            )
 
-    ingest_inputs = [
-        IngestSource(
-            file_path=item["temp_path"],
-            original_filename=item["original_name"],
-            sidecar_text=sidecars.get((item["parent"], item["stem"])) or None,
-        )
-        for item in pending_images
-    ]
+        ingest_inputs = [
+            IngestSource(
+                file_path=item["temp_path"],
+                original_filename=item["original_name"],
+                sidecar_text=sidecars.get((item["parent"], item["stem"])) or None,
+            )
+            for item in pending_images
+        ]
+
+        if not ingest_inputs:
+            raise HTTPException(
+                status_code=400,
+                detail="No supported image files were provided for ingest",
+            )
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     # Submit async ingest job — open a fresh session inside the worker so it is
     # not tied to the request-scoped session that FastAPI closes on 202 return.
@@ -396,6 +407,8 @@ async def ingest_upload(
     _ingest_inputs = ingest_inputs
 
     _tmp_dir = tmp_dir  # capture for cleanup in worker
+    import uuid as _uuid
+    _job_id = str(_uuid.uuid4())
 
     async def _run_ingest() -> dict:
         from database import AsyncSessionLocal
@@ -407,14 +420,19 @@ async def ingest_upload(
                     results["created"] = progress.assets_created
                     results["errors"] = progress.errors
                     results["duplicates"] = progress.duplicates_found
+                    await queue.update_progress(
+                        _job_id,
+                        int(progress.pct),
+                        f"Importing {progress.completed}/{progress.total}: {progress.current_file}",
+                    )
                 await worker_db.commit()
         finally:
             # Clean up temp files to avoid unbounded disk usage
             shutil.rmtree(_tmp_dir, ignore_errors=True)
         return results
 
-    job_id = await queue.submit(_run_ingest, job_type="ingest_upload")
-    return {"job_id": job_id, "file_count": len(ingest_inputs)}
+    await queue.submit(_run_ingest, job_type="ingest_upload", job_id=_job_id)
+    return {"job_id": _job_id, "file_count": len(ingest_inputs)}
 
 
 @router.post(
@@ -444,10 +462,14 @@ async def ingest_dir(
                 r = Path(root).resolve()
                 if r.is_dir():
                     allowed_roots.append(r)
-    if not any(
+    # Local-first usability: in local debug mode with loopback-only access,
+    # allow any local directory to avoid requiring env edits on first run.
+    allow_any_local_dir = settings.DEBUG and (not settings.ALLOW_REMOTE_ACCESS)
+
+    if (not allow_any_local_dir) and (not any(
         requested == root or root in requested.parents
         for root in allowed_roots
-    ):
+    )):
         raise HTTPException(
             status_code=403,
             detail="Directory is outside allowed ingest roots. Configure ALLOWED_INGEST_ROOTS to add directories.",
@@ -459,6 +481,8 @@ async def ingest_dir(
 
     _dir_project_id = project_id
     _dir_body = body
+    import uuid as _uuid
+    _dir_job_id = str(_uuid.uuid4())
 
     async def _run() -> dict:
         from database import AsyncSessionLocal
@@ -471,11 +495,16 @@ async def ingest_dir(
                 results["created"] = progress.assets_created
                 results["errors"] = progress.errors
                 results["duplicates"] = progress.duplicates_found
+                await queue.update_progress(
+                    _dir_job_id,
+                    int(progress.pct),
+                    f"Importing {progress.completed}/{progress.total}: {progress.current_file}",
+                )
             await worker_db.commit()
         return results
 
-    job_id = await queue.submit(_run, job_type="ingest_directory")
-    return {"job_id": job_id, "directory": body.directory_path}
+    await queue.submit(_run, job_type="ingest_directory", job_id=_dir_job_id)
+    return {"job_id": _dir_job_id, "directory": body.directory_path}
 
 
 @router.get("/assets/{asset_id}", response_model=AssetDetail)

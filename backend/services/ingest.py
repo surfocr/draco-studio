@@ -9,7 +9,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncGenerator, Iterable
+from typing import AsyncGenerator, Iterable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,8 +23,8 @@ from providers.registry import get_registry
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MIME_TYPES = {
-    "image/jpeg", "image/png", "image/webp",
-    "image/bmp", "image/gif", "image/tiff",
+    "image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp",
+    "image/bmp", "image/gif", "image/tiff", "image/x-tiff",
 }
 
 SUPPORTED_EXTENSIONS = {
@@ -81,8 +81,17 @@ def _read_sidecar_text(sidecar_path: Path) -> str | None:
     return text or None
 
 
+def _is_supported_mime_or_extension(mime_type: str | None, extension: str) -> bool:
+    """Accept known image MIME types, but fall back to extension when MIME is missing/generic."""
+    if mime_type and mime_type in SUPPORTED_MIME_TYPES:
+        return True
+    if mime_type in (None, "", "application/octet-stream"):
+        return extension in SUPPORTED_EXTENSIONS
+    return False
+
+
 async def ingest_files(
-    file_paths: list[str | IngestSource],
+    file_paths: Sequence[str | IngestSource],
     project_id: str,
     db: AsyncSession,
     queue_analysis: bool = True,
@@ -96,6 +105,15 @@ async def ingest_files(
     sources = _normalize_sources(file_paths)
 
     progress = IngestProgress(total=len(sources))
+
+    # Pre-fetch all existing SHA256 hashes for this project to avoid N+1 queries
+    existing_hashes_result = await db.execute(
+        select(Asset.sha256_hash).where(
+            Asset.project_id == project_id,
+            Asset.sha256_hash.isnot(None),
+        )
+    )
+    known_hashes: set[str] = {h for (h,) in existing_hashes_result.all()}
 
     for source in sources:
         progress.current_file = source.display_name
@@ -137,7 +155,7 @@ async def ingest_files(
                 yield progress
                 continue
 
-            if mime_type not in SUPPORTED_MIME_TYPES:
+            if not _is_supported_mime_or_extension(mime_type, extension):
                 progress.errors.append(f"Unsupported image type: {source.display_name}")
                 progress.completed += 1
                 yield progress
@@ -149,15 +167,9 @@ async def ingest_files(
                 with open(path, "rb") as f:
                     hashes = await storage.compute_hashes(f.read())
 
-            existing = await db.execute(
-                select(Asset).where(
-                    Asset.project_id == project_id,
-                    Asset.sha256_hash == hashes["sha256"],
-                )
-            )
-            existing_asset = existing.scalar_one_or_none()
+            existing = hashes["sha256"] in known_hashes
 
-            if existing_asset is not None:
+            if existing:
                 logger.debug("Duplicate found (exact hash): %s", source.display_name)
                 progress.duplicates_found += 1
                 progress.completed += 1
@@ -203,6 +215,9 @@ async def ingest_files(
             )
             db.add(asset)
             await db.flush()
+
+            # Track this hash for intra-batch dedup
+            known_hashes.add(hashes["sha256"])
 
             if source.sidecar_text:
                 caption_id = str(uuid.uuid4())
@@ -262,11 +277,16 @@ async def ingest_directory(
     if not d.is_dir():
         raise ValueError(f"Not a directory: {dir_path}")
 
+    MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB safety limit
     glob = "**/*" if recursive else "*"
     image_paths = sorted(
         p
         for p in d.glob(glob)
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+        if p.is_file()
+        and not p.is_symlink()
+        and not any(part.startswith(".") for part in p.relative_to(d).parts)
+        and p.suffix.lower() in SUPPORTED_EXTENSIONS
+        and p.stat().st_size <= MAX_FILE_SIZE
     )
 
     sources = [

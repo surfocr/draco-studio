@@ -17,6 +17,10 @@ if errorlevel 1 (
 )
 
 echo [draco] Launching Draco...
+
+rem ── Ensure DEBUG mode is on for local desktop use (skips Alembic check, uses create_all) ──
+if not defined DEBUG set "DEBUG=true"
+
 "%VENV_PYTHON%" scripts\run_local_app.py %*
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" (
@@ -30,9 +34,11 @@ goto :done
 set "HOST_PYTHON="
 where py >nul 2>&1
 if not errorlevel 1 (
-  py -3.11 -c "import sys" >nul 2>&1
-  if not errorlevel 1 (
-    set "HOST_PYTHON=py -3.11"
+  for %%V in (3.13 3.12 3.11) do (
+    if not defined HOST_PYTHON (
+      py -%%V -c "import sys" >nul 2>&1
+      if not errorlevel 1 set "HOST_PYTHON=py -%%V"
+    )
   )
 )
 if not defined HOST_PYTHON (
@@ -78,12 +84,16 @@ exit /b 0
 if exist "backend\.venv\.bootstrap.ok" exit /b 0
 
 echo [draco] Installing backend dependencies...
+echo [draco]   This may take several minutes on first run (downloading AI/ML packages).
+echo [draco]   Please wait - do not close this window.
+echo.
 "%VENV_PYTHON%" -m pip install --disable-pip-version-check -r backend\requirements.txt
 if errorlevel 1 (
   echo [draco] Backend dependency installation failed.
   exit /b 1
 )
 >"backend\.venv\.bootstrap.ok" echo ok
+echo [draco]   Backend dependencies installed successfully.
 exit /b 0
 
 :ensure_frontend

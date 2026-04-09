@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Trophy,
@@ -14,7 +14,6 @@ import {
   Star,
   X,
   AlertTriangle,
-  Filter,
   ArrowUpDown,
   RotateCcw,
 } from 'lucide-react'
@@ -55,7 +54,7 @@ function confidenceValue(sigma: number): number {
   return Math.max(0, Math.min(1, 1 - sigma / 8.333))
 }
 
-function scoreColorClass(value: number, total: number, rank: number): string {
+function scoreColorClass(_value: number, total: number, rank: number): string {
   if (rank <= Math.floor(total * 0.25)) return 'text-green-400'
   if (rank > Math.floor(total * 0.75)) return 'text-red-400'
   return 'text-text-primary'

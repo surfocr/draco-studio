@@ -32,11 +32,14 @@ async def queue_caption_task(
     options: dict | None = None,
 ) -> str:
     """Queue bulk caption generation. Returns job_id."""
+    import uuid
     from database import AsyncSessionLocal
     from services.caption import generate_caption
     from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
+    total = len(asset_ids)
+    _job_id = str(uuid.uuid4())
 
     async def _run() -> dict:
         results = {"success": 0, "failed": 0, "errors": []}
@@ -53,13 +56,20 @@ async def queue_caption_task(
                 except Exception as exc:
                     results["failed"] += 1
                     results["errors"].append(str(exc))
+                pct = int((i + 1) / total * 100) if total else 100
+                await queue.update_progress(_job_id, pct, f"Captioned {i + 1}/{total}")
             await db.commit()
         return results
 
-    return await queue.submit(_run, job_type="caption")
+    return await queue.submit(_run, job_type="caption", job_id=_job_id)
 
 
-async def queue_duplicate_scan(project_id: str) -> str:
+async def queue_duplicate_scan(
+    project_id: str,
+    phash_threshold: int | None = None,
+    embedding_threshold: float | None = None,
+    face_threshold: float | None = None,
+) -> str:
     """Queue duplicate detection scan for a project."""
     from database import AsyncSessionLocal
     from services.duplicate import find_duplicates
@@ -69,7 +79,13 @@ async def queue_duplicate_scan(project_id: str) -> str:
 
     async def _run() -> dict:
         async with AsyncSessionLocal() as db:
-            clusters = await find_duplicates(project_id, db)
+            clusters = await find_duplicates(
+                project_id,
+                db,
+                phash_threshold=phash_threshold,
+                embedding_threshold=embedding_threshold,
+                face_threshold=face_threshold,
+            )
             return {"clusters_found": len(clusters)}
 
     return await queue.submit(_run, job_type="duplicate_scan")
@@ -81,6 +97,7 @@ async def queue_ai_judge_task(
     job_id: str | None = None,
 ) -> str:
     """Queue AI judge scoring for a batch of assets. Returns job_id."""
+    import uuid
     from database import AsyncSessionLocal
     from services.ai_judge import get_ai_judge
     from workers.job_queue import get_job_queue
@@ -88,11 +105,13 @@ async def queue_ai_judge_task(
     from models.asset import Asset
 
     queue = get_job_queue()
+    total = len(asset_ids)
+    _job_id = job_id or str(uuid.uuid4())
 
     async def _run() -> dict:
         results = {"scored": 0, "failed": 0, "errors": []}
         async with AsyncSessionLocal() as db:
-            for asset_id in asset_ids:
+            for i, asset_id in enumerate(asset_ids):
                 try:
                     result = await db.execute(
                         select(Asset).where(Asset.id == asset_id)
@@ -112,9 +131,11 @@ async def queue_ai_judge_task(
                 except Exception as exc:
                     results["failed"] += 1
                     results["errors"].append(f"{asset_id}: {exc}")
+                pct = int((i + 1) / total * 100) if total else 100
+                await queue.update_progress(_job_id, pct, f"Judged {i + 1}/{total}")
         return results
 
-    return await queue.submit(_run, job_type="ai_judge", job_id=job_id)
+    return await queue.submit(_run, job_type="ai_judge", job_id=_job_id)
 
 
 async def queue_export_sidecars_task(
@@ -124,18 +145,21 @@ async def queue_export_sidecars_task(
     job_id: str | None = None,
 ) -> str:
     """Queue sidecar .txt file export for a set of assets. Returns job_id."""
+    import uuid
     from database import AsyncSessionLocal
     from services.caption import CaptionService
     from workers.job_queue import get_job_queue
 
     queue = get_job_queue()
     service = CaptionService()
+    total = len(asset_ids)
+    _job_id = job_id or str(uuid.uuid4())
 
     async def _run() -> dict:
         written = 0
         errors: list[str] = []
         async with AsyncSessionLocal() as db:
-            for asset_id in asset_ids:
+            for i, asset_id in enumerate(asset_ids):
                 try:
                     path = await service.write_sidecar_direct(asset_id, db, output_dir)
                     if path:
@@ -144,6 +168,8 @@ async def queue_export_sidecars_task(
                         errors.append(f"{asset_id}: no active caption")
                 except Exception as exc:
                     errors.append(f"{asset_id}: {exc}")
-        return {"written": written, "errors": errors, "job_id": job_id}
+                pct = int((i + 1) / total * 100) if total else 100
+                await queue.update_progress(_job_id, pct, f"Exported {i + 1}/{total}")
+        return {"written": written, "errors": errors, "job_id": _job_id}
 
-    return await queue.submit(_run, job_type="export_sidecars", job_id=job_id)
+    return await queue.submit(_run, job_type="export_sidecars", job_id=_job_id)

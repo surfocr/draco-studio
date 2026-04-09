@@ -77,8 +77,8 @@ class OpenFaceProvider(HeadPoseProvider, ActionUnitProvider):
             return {"available": False, "error": "OpenFace not available or failed"}
         try:
             return {
-                "yaw": float(row.get("pose_Rx", 0)),
-                "pitch": float(row.get("pose_Ry", 0)),
+                "yaw": float(row.get("pose_Ry", 0)),
+                "pitch": float(row.get("pose_Rx", 0)),
                 "roll": float(row.get("pose_Rz", 0)),
                 "tx": float(row.get("pose_Tx", 0)),
                 "ty": float(row.get("pose_Ty", 0)),

@@ -82,10 +82,10 @@ class Asset(Base):
 
     # ── Timestamps ────────────────────────────────────────────────────────────
     imported_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow
+        DateTime(timezone=True), default=_utcnow, index=True
     )
     analyzed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        DateTime(timezone=True), nullable=True, index=True
     )
     modified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -96,7 +96,7 @@ class Asset(Base):
     thumbnail_small_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ── Face analysis ─────────────────────────────────────────────────────────
-    face_count: Mapped[int] = mapped_column(Integer, default=0)
+    face_count: Mapped[int] = mapped_column(Integer, default=0, index=True)
     primary_face_bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # {"x1": float, "y1": float, "x2": float, "y2": float, "confidence": float}
     face_sharpness: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -157,11 +157,11 @@ class Asset(Base):
     caption_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # ── Quality scores ────────────────────────────────────────────────────────
-    technical_quality: Mapped[float | None] = mapped_column(Float, nullable=True)
+    technical_quality: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # 0.0–1.0: sharpness, resolution, noise
-    aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    aesthetic_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # 0.0–1.0: LAION aesthetic predictor or heuristic
-    face_quality: Mapped[float | None] = mapped_column(Float, nullable=True)
+    face_quality: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # 0.0–1.0: InsightFace det_score, face sharpness
     training_usefulness: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 0.0–1.0: overall training value estimate
@@ -169,7 +169,7 @@ class Asset(Base):
     # 0.0–1.0: 1 = completely unique, 0 = many near-duplicates
     redundancy_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 0.0–1.0: how redundant this asset is in the dataset
-    composite_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    composite_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # DracoFlow v4 weighted composite
     score_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # {"sharpness": 0.85, "aesthetic": 0.72, ...}
@@ -205,7 +205,7 @@ class Asset(Base):
     # "exact"/"phash"/"embedding"/"face"
 
     # ── Ranking ───────────────────────────────────────────────────────────────
-    trueskill_mu: Mapped[float] = mapped_column(Float, default=25.0)
+    trueskill_mu: Mapped[float] = mapped_column(Float, default=25.0, index=True)
     trueskill_sigma: Mapped[float] = mapped_column(Float, default=8.333)
     elo_rating: Mapped[float] = mapped_column(Float, default=1500.0)
     ranking_comparisons_count: Mapped[int] = mapped_column(Integer, default=0)
