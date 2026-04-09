@@ -115,6 +115,11 @@ async def ingest_files(
     )
     known_hashes: set[str] = {h for (h,) in existing_hashes_result.all()}
 
+    # Collected mid-loop and queued only after db.commit() — queueing inside the
+    # loop would race the workers against a still-uncommitted transaction and
+    # the analysis jobs would fail with "asset not found" on large batches.
+    pending_analysis_ids: list[str] = []
+
     for source in sources:
         progress.current_file = source.display_name
         path = Path(source.file_path)
@@ -242,11 +247,8 @@ async def ingest_files(
                 project.asset_count += 1
 
             progress.assets_created.append(asset_id)
-
             if queue_analysis:
-                from workers.tasks import queue_analysis_task
-
-                await queue_analysis_task(asset_id)
+                pending_analysis_ids.append(asset_id)
 
         except Exception as exc:
             logger.exception("Failed to ingest %s: %s", source.file_path, exc)
@@ -256,6 +258,15 @@ async def ingest_files(
         yield progress
 
     await db.commit()
+
+    if pending_analysis_ids:
+        from workers.tasks import queue_analysis_task
+        for asset_id in pending_analysis_ids:
+            try:
+                await queue_analysis_task(asset_id)
+            except Exception as exc:
+                logger.warning("Failed to queue analysis for %s: %s", asset_id, exc)
+
     logger.info(
         "Ingest complete: %d files, %d created, %d duplicates, %d errors",
         progress.total,
