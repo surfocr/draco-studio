@@ -193,9 +193,11 @@ class JobQueue:
                 logger.debug("Job %s done", job.id[:8])
 
             except asyncio.CancelledError:
-                job.status = "cancelled"
-                await self._persist_job(job)
+                if job.status not in ("done", "failed"):
+                    job.status = "cancelled"
+                    await self._persist_job(job)
                 logger.info("Job %s cancelled", job.id[:8])
+                raise
             except Exception as exc:
                 job.status = "failed"
                 job.error = str(exc)
@@ -204,7 +206,10 @@ class JobQueue:
             finally:
                 self._running_tasks.pop(job.id, None)
                 job.finished_at = datetime.now(timezone.utc)
-                await self._persist_job(job)
+                try:
+                    await asyncio.shield(self._persist_job(job))
+                except asyncio.CancelledError:
+                    logger.debug("Job %s final persist shielded from cancellation", job.id[:8])
                 self._queue.task_done()
 
     async def _persist_job(self, job: Job) -> None:
