@@ -209,7 +209,7 @@ class JobQueue:
                 try:
                     await asyncio.shield(self._persist_job(job))
                 except asyncio.CancelledError:
-                    pass
+                    logger.debug("Job %s final persist shielded from cancellation", job.id[:8])
                 self._queue.task_done()
 
     async def _persist_job(self, job: Job) -> None:
