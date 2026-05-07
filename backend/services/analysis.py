@@ -245,7 +245,7 @@ async def _check_phash_duplicates(asset: Asset, db: AsyncSession) -> None:
     if not asset.phash:
         return
 
-    from sqlalchemy import select, and_
+    from sqlalchemy import select
     from models.asset import Asset as A
     from config import settings
 

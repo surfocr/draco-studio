@@ -6,8 +6,8 @@ import os
 import sys
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 
@@ -23,16 +23,16 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import all models so metadata is populated
-from database import Base
-from models.project import Project  # noqa: F401
-from models.asset import Asset  # noqa: F401
-from models.caption import CaptionVersion  # noqa: F401
-from models.face import FaceCluster, IdentityCluster  # noqa: F401
-from models.ranking import RankingSession, RankingComparison  # noqa: F401
-from models.augmentation import AugmentationJob, AugmentationResult  # noqa: F401
-from models.export import ExportJob  # noqa: F401
-from models.provider_config import ProviderConfig  # noqa: F401
-from models.preferences import UserPreferences  # noqa: F401
+from database import Base  # noqa: E402
+from models.project import Project  # noqa: E402, F401
+from models.asset import Asset  # noqa: E402, F401
+from models.caption import CaptionVersion  # noqa: E402, F401
+from models.face import FaceCluster, IdentityCluster  # noqa: E402, F401
+from models.ranking import RankingSession, RankingComparison  # noqa: E402, F401
+from models.augmentation import AugmentationJob, AugmentationResult  # noqa: E402, F401
+from models.export import ExportJob  # noqa: E402, F401
+from models.provider_config import ProviderConfig  # noqa: E402, F401
+from models.preferences import UserPreferences  # noqa: E402, F401
 
 target_metadata = Base.metadata
 

@@ -10,8 +10,6 @@ import time
 import uuid
 from typing import Any
 
-import numpy as np
-from PIL import Image
 
 from config import settings
 from providers.base import EmbeddingProvider, EmbeddingResult

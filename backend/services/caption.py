@@ -4,7 +4,6 @@ Manages caption generation, versioning, bulk operations, and consistency analysi
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import uuid

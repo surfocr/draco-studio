@@ -1,6 +1,9 @@
 """OpenFace head pose and action unit provider (subprocess-based)."""
 from __future__ import annotations
-import asyncio, json, os, shutil, tempfile, time
+import asyncio
+import shutil
+import tempfile
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from providers.base import HeadPoseProvider, ActionUnitProvider

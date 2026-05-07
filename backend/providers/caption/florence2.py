@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 try:
     from transformers import AutoModelForCausalLM, AutoProcessor
-    import torch
     _TRANSFORMERS_AVAILABLE = True
 except ImportError:
     _TRANSFORMERS_AVAILABLE = False

@@ -6,8 +6,6 @@ import logging
 import os
 from typing import Annotated
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -17,6 +15,8 @@ from database import get_db
 from models.provider_config import ProviderConfig
 from providers.registry import get_registry
 from services.provider_config import apply_provider_config_row, build_live_provider_config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 _SECRET_CONFIG_KEYS = {"api_key", "token", "access_token", "secret", "client_secret", "password"}

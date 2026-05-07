@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 try:
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from PIL import Image
     import torch
     _TRANSFORMERS_AVAILABLE = True
 except ImportError:
@@ -117,7 +116,6 @@ class JoyCaptionProvider(CaptionProvider):
         max_tokens = opts.get("max_tokens", 512)
 
         def _run() -> str:
-            image = Image.open(image_path).convert("RGB")
             # JoyCaption uses a conversation format with image token
             # Simplified single-turn inference
             inputs = self._tokenizer(

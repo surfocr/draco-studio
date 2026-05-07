@@ -4,7 +4,6 @@ Centralized asset review-state transitions and non-destructive deletion.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -3,7 +3,6 @@ Benchmark router — compare caption/face/embedding providers on a sample of ass
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Annotated

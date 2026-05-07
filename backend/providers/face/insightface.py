@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -25,7 +24,6 @@ from providers.base import (
 logger = logging.getLogger(__name__)
 
 try:
-    import insightface
     from insightface.app import FaceAnalysis
     _INSIGHTFACE_AVAILABLE = True
 except ImportError:

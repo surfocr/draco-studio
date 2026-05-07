@@ -1,7 +1,6 @@
 """Ranking router — complete implementation."""
 from __future__ import annotations
 
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status

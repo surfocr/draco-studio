@@ -185,8 +185,8 @@ async def test_cancel_export_job_marks_export_job_cancelled(db):
 
 @pytest.mark.asyncio
 async def test_recover_stale_export_jobs_marks_running_jobs_failed(db):
-    # Count any pre-existing stale jobs left by earlier tests
-    pre_existing = await recover_stale_export_jobs(db)
+    # Clear any pre-existing stale jobs left by earlier tests
+    await recover_stale_export_jobs(db)
 
     project = await _create_project(db, "export-recover")
     running_job = ExportJob(project_id=project.id, export_format="zip", status="running")
