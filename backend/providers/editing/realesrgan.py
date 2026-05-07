@@ -1,6 +1,5 @@
 """Real-ESRGAN upscaling provider."""
 from __future__ import annotations
-import time
 from pathlib import Path
 from typing import Any, Optional
 from providers.base import ProviderBase
@@ -76,7 +75,6 @@ class RealESRGANProvider(ProviderBase):
             raise RuntimeError(f"RealESRGAN not available: {self._load_error}")
         try:
             import cv2
-            import numpy as np
 
             img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
             if img is None:

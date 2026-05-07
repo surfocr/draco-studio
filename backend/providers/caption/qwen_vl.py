@@ -187,7 +187,8 @@ class QwenVLProvider(CaptionProvider):
                 ).to(self._device)
             except ImportError:
                 # Fallback: encode image directly without qwen_vl_utils
-                import base64, io
+                import base64
+                import io
                 buf = io.BytesIO()
                 pil_img.save(buf, format="JPEG")
                 b64 = base64.b64encode(buf.getvalue()).decode()

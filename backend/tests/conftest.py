@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

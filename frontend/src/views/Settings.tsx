@@ -427,7 +427,7 @@ function ApiKeyRow({ label, providerType, providerName, placeholder, hasKey }: A
       setSaved(true)
       queryClient.invalidateQueries({ queryKey: ['api-key-status'] })
       setTimeout(() => setSaved(false), 2000)
-    } catch (e) {
+    } catch (_e) {
       setError('Failed to save key')
     } finally {
       setSaving(false)

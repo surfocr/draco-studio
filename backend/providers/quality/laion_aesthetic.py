@@ -1,8 +1,6 @@
 """LAION Aesthetic Predictor v2 quality scorer provider."""
 from __future__ import annotations
-import time
 from typing import Optional
-from pathlib import Path
 from providers.base import QualityScorer
 
 class LAIONAestheticProvider(QualityScorer):
@@ -56,7 +54,7 @@ class LAIONAestheticProvider(QualityScorer):
             self._clip_model, self._clip_preprocess = clip.load("ViT-L/14", device=self._device)
 
             # Try to load weights — download if not cached
-            import torch, os
+            import torch
             from pathlib import Path
             cache = Path.home() / ".cache" / "draco" / "aesthetic_predictor_v2_5.pth"
             cache.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +80,6 @@ class LAIONAestheticProvider(QualityScorer):
             import torch
             from PIL import Image
 
-            t0 = time.monotonic()
             img = Image.open(image_path).convert("RGB")
             inp = self._clip_preprocess(img).unsqueeze(0).to(self._device)
             with torch.no_grad():

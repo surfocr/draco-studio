@@ -97,7 +97,7 @@ async def _load_captions_for_assets(
     result = await db.execute(
         select(CaptionVersion).where(
             CaptionVersion.asset_id.in_(asset_ids),
-            CaptionVersion.is_active == True,
+            CaptionVersion.is_active.is_(True),
         )
     )
     return {cv.asset_id: cv.text for cv in result.scalars().all()}

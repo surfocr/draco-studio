@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.asset import Asset
-from models.face import FaceCluster, IdentityCluster
+from models.face import IdentityCluster
 
 router = APIRouter(prefix="/api", tags=["faces"])
 

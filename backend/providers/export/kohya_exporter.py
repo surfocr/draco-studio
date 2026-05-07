@@ -7,12 +7,11 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,7 +85,7 @@ class KohyaExporter(ExportProvider):
         job_id: str | None = None,
     ) -> ExportManifest:
         """Full DB-aware export."""
-        from models.asset import Asset, ReviewState
+        from models.asset import Asset
         from models.caption import CaptionVersion
 
         conditions = [
@@ -113,7 +112,7 @@ class KohyaExporter(ExportProvider):
         caption_result = await db.execute(
             select(CaptionVersion).where(
                 CaptionVersion.asset_id.in_([a.id for a in assets]),
-                CaptionVersion.is_active == True,
+                CaptionVersion.is_active.is_(True),
             )
         )
         captions_by_asset = {cv.asset_id: cv for cv in caption_result.scalars().all()}

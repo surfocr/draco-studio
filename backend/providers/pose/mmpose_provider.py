@@ -1,7 +1,7 @@
 """MMPose whole-body keypoint provider."""
 from __future__ import annotations
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from providers.base import PoseProvider, PoseResult
 
 class MMPoseProvider(PoseProvider):
@@ -35,8 +35,7 @@ class MMPoseProvider(PoseProvider):
             return
         try:
             import torch
-            from mmpose.apis import init_model, inference_topdown
-            from mmpose.utils import adapt_mmdet_pipeline
+            from mmpose.apis import init_model
 
             device = self._device
             if device == "auto":

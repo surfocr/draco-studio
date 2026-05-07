@@ -78,7 +78,7 @@ class MoondreamProvider(CaptionProvider):
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            logger.info(f"Loading Moondream2…")
+            logger.info("Loading Moondream2…")
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_id, revision=self.revision
             )

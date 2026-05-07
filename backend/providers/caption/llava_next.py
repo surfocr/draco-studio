@@ -1,7 +1,6 @@
 """LLaVA-NeXT caption provider — llava-hf/llava-v1.6-mistral-7b-hf."""
 from __future__ import annotations
-import base64, time
-from pathlib import Path
+import time
 from typing import Optional, List
 from providers.base import CaptionProvider, CaptionResult
 

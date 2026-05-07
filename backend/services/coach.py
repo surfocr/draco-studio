@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
@@ -116,7 +116,7 @@ class DatasetCoach:
             caption_result = await db.execute(
                 select(CaptionVersion).where(
                     CaptionVersion.asset_id.in_([a.id for a in assets]),
-                    CaptionVersion.is_active == True,
+                    CaptionVersion.is_active.is_(True),
                 )
             )
             captions_by_asset: dict[str, CaptionVersion] = {

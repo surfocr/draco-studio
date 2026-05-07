@@ -9,8 +9,6 @@ import asyncio
 import json
 import logging
 import shutil
-import time
-import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,7 +117,7 @@ class LoRAExporter(ExportProvider):
         caption_result = await db.execute(
             select(CaptionVersion).where(
                 CaptionVersion.asset_id.in_([a.id for a in assets]),
-                CaptionVersion.is_active == True,
+                CaptionVersion.is_active.is_(True),
             )
         )
         captions_by_asset = {cv.asset_id: cv for cv in caption_result.scalars().all()}

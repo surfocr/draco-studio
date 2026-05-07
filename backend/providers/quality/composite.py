@@ -92,7 +92,6 @@ class CompositeQualityScorer(QualityScorer):
         image_path: str,
         face_results: FaceAnalysisResult | None,
     ) -> QualityResult:
-        t0 = time.monotonic()
         try:
             img = Image.open(image_path).convert("RGB")
         except Exception as exc:
@@ -215,7 +214,6 @@ class CompositeQualityScorer(QualityScorer):
         contrast_score = float(np.clip(rms * 2.0, 0.0, 1.0))
 
         # Saturation: convert to HSV, use S channel mean
-        img_hsv = img.convert("HSV") if hasattr(img, "convert") else img
         try:
             hsv_array = np.array(img.convert("HSV"))
             sat_mean = float(np.mean(hsv_array[:, :, 1])) / 255.0
