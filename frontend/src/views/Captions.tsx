@@ -694,7 +694,7 @@ export function Captions() {
     const nextMeta = targetMeta(nextModel)
     setActiveStyle(nextMeta.defaultStyle)
     saveCaptionRuntimeOptions({ target_model: nextModel })
-  }, [saveCaptionRuntimeOptions])
+  }, [saveCaptionRuntimeOptions, setActiveStyle])
 
   const handleCharacterModeChange = useCallback((nextValue: boolean) => {
     setCharacterMode(nextValue)

@@ -78,8 +78,8 @@ class CaptionService:
 
         target_model = str(merged_options.get("target_model") or "flux_1")
         character_mode = bool(merged_options.get("character_mode"))
-        provider_prompt = provider.get_prompt_for_style(style, None)
-        if not (options and options.get("prompt")):
+        if not merged_options.get("prompt"):
+            provider_prompt = provider.get_prompt_for_style(style, custom_prompt=None)
             merged_options["prompt"] = build_model_aware_prompt(
                 style=style,
                 target_model=target_model,
