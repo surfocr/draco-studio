@@ -88,6 +88,8 @@ DEFAULT_TASK_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         "timeout": 120,
         "batch_size": 1,
         "concurrency": 1,
+        "target_model": "flux_1",
+        "character_mode": False,
     },
     "ranking_explanation": {
         "model": "llava:13b",

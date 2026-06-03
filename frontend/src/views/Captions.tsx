@@ -21,7 +21,7 @@ import {
   FileText,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { assetsApi, captionsApi } from '@/hooks/useApi'
+import { assetsApi, captionsApi, projectsApi } from '@/hooks/useApi'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useToast } from '@/components/providers/ToastProvider'
@@ -41,6 +41,20 @@ const PROVIDERS = ['ollama', 'gemini', 'openai', 'florence2']
 
 type FilterTab = 'all' | 'captioned' | 'uncaptioned' | 'needs-review'
 type SortMode = 'score' | 'imported_at' | 'caption_length'
+type TargetModel = 'flux_1' | 'flux_2' | 'z_image' | 'wan_2_2' | 'sdxl' | 'pony'
+
+const TARGET_MODELS: Array<{ value: TargetModel; label: string; defaultStyle: CaptionStyle; recommendedTagger: string; exportFormat: string }> = [
+  { value: 'flux_1', label: 'Flux.1', defaultStyle: 'natural', recommendedTagger: 'JoyCaption', exportFormat: 'ai-toolkit' },
+  { value: 'flux_2', label: 'Flux.2', defaultStyle: 'natural', recommendedTagger: 'JoyCaption', exportFormat: 'ai-toolkit' },
+  { value: 'z_image', label: 'Z-Image', defaultStyle: 'natural', recommendedTagger: 'JoyCaption', exportFormat: 'ai-toolkit' },
+  { value: 'wan_2_2', label: 'WAN 2.2', defaultStyle: 'natural', recommendedTagger: 'Qwen2.5-VL-7B', exportFormat: 'musubi-tuner' },
+  { value: 'sdxl', label: 'SDXL', defaultStyle: 'wd_tags', recommendedTagger: 'WD-EVA02-Large-Tagger-v3', exportFormat: 'kohya_ss' },
+  { value: 'pony', label: 'Pony', defaultStyle: 'wd_tags', recommendedTagger: 'WD-EVA02-Large-Tagger-v3', exportFormat: 'kohya_ss' },
+]
+
+function targetMeta(targetModel: TargetModel) {
+  return TARGET_MODELS.find((item) => item.value === targetModel) ?? TARGET_MODELS[0]
+}
 
 // ── Helper: count tokens (rough estimate) ─────────────────────────────────────
 
@@ -391,6 +405,8 @@ export function Captions() {
   // Center panel state
   const [activeStyle, setActiveStyle] = useState<CaptionStyle>('natural')
   const [selectedProvider, setSelectedProvider] = useState('ollama')
+  const [targetModel, setTargetModel] = useState<TargetModel>('flux_1')
+  const [characterMode, setCharacterMode] = useState(false)
   const [editText, setEditText] = useState('')
   const [isDirty, setIsDirty] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -464,6 +480,23 @@ export function Captions() {
   })
 
   const activeCaption = captions.find((c) => c.is_active) ?? captions[0] ?? null
+  const { data: runtimeConfig } = useQuery({
+    queryKey: ['project-runtime', activeProject?.id],
+    queryFn: () => projectsApi.getRuntime(activeProject!.id),
+    enabled: !!activeProject?.id,
+    staleTime: 30_000,
+  })
+
+  const runtimeUpdateMutation = useMutation({
+    mutationFn: (
+      patch: {
+        task_provider_options: Record<string, Record<string, unknown>>
+      }
+    ) => projectsApi.updateRuntime(activeProject!.id, patch),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-runtime', activeProject?.id] })
+    },
+  })
 
   // Sync textarea when active caption changes (and not dirty)
   useEffect(() => {
@@ -479,10 +512,21 @@ export function Captions() {
     setCompareResults(null)
   }, [activeAssetId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const runtimeOptions = runtimeConfig?.task_provider_options?.caption as Record<string, unknown> | undefined
+    const runtimeTarget = String(runtimeOptions?.target_model ?? 'flux_1') as TargetModel
+    const runtimeCharacterMode = Boolean(runtimeOptions?.character_mode)
+    setTargetModel(runtimeTarget)
+    setCharacterMode(runtimeCharacterMode)
+  }, [runtimeConfig?.task_provider_options])
+
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   const generateMutation = useMutation({
-    mutationFn: () => captionsApi.generate(activeAssetId!, selectedProvider, activeStyle),
+    mutationFn: () => captionsApi.generate(activeAssetId!, selectedProvider, activeStyle, {
+      target_model: targetModel,
+      character_mode: characterMode,
+    }),
     onSuccess: (newVersion) => {
       queryClient.invalidateQueries({ queryKey: ['captions', activeAssetId] })
       queryClient.invalidateQueries({ queryKey: ['caption-assets'] })
@@ -492,7 +536,10 @@ export function Captions() {
   })
 
   const compareMutation = useMutation({
-    mutationFn: () => captionsApi.compare(activeAssetId!, PROVIDERS, activeStyle),
+    mutationFn: () => captionsApi.compare(activeAssetId!, PROVIDERS, activeStyle, {
+      target_model: targetModel,
+      character_mode: characterMode,
+    }),
     onSuccess: (results) => {
       setCompareResults(results)
     },
@@ -521,7 +568,10 @@ export function Captions() {
 
   const bulkGenerateMutation = useMutation({
     mutationFn: (assetIds: string[]) =>
-      captionsApi.bulkGenerate(activeProject!.id, assetIds, selectedProvider, activeStyle),
+      captionsApi.bulkGenerate(activeProject!.id, assetIds, selectedProvider, activeStyle, {
+        target_model: targetModel,
+        character_mode: characterMode,
+      }),
     onSuccess: (result) => {
       toast.success(`Queued caption generation for ${result.asset_count} assets`)
       queryClient.invalidateQueries({ queryKey: ['caption-assets'] })
@@ -623,6 +673,34 @@ export function Captions() {
     setShowFindReplace(false)
   }, [bulkEditMutation])
 
+  const saveCaptionRuntimeOptions = useCallback(
+    (patch: Record<string, unknown>) => {
+      if (!runtimeConfig) return
+      runtimeUpdateMutation.mutate({
+        task_provider_options: {
+          ...runtimeConfig.task_provider_options,
+          caption: {
+            ...(runtimeConfig.task_provider_options.caption ?? {}),
+            ...patch,
+          },
+        },
+      })
+    },
+    [runtimeConfig, runtimeUpdateMutation]
+  )
+
+  const handleTargetModelChange = useCallback((nextModel: TargetModel) => {
+    setTargetModel(nextModel)
+    const nextMeta = targetMeta(nextModel)
+    setActiveStyle(nextMeta.defaultStyle)
+    saveCaptionRuntimeOptions({ target_model: nextModel })
+  }, [saveCaptionRuntimeOptions])
+
+  const handleCharacterModeChange = useCallback((nextValue: boolean) => {
+    setCharacterMode(nextValue)
+    saveCaptionRuntimeOptions({ character_mode: nextValue })
+  }, [saveCaptionRuntimeOptions])
+
   // ── Guard: no active project ──────────────────────────────────────────────
 
   if (!activeProject) {
@@ -638,6 +716,7 @@ export function Captions() {
   const isGenerating = generateMutation.isPending
   const thumbnailUrl = activeAsset ? assetsApi.thumbnailUrl(activeAsset.id, 512) : null
   const triggerWord = activeProject.trigger_word ?? ''
+  const selectedTargetMeta = targetMeta(targetModel)
 
   // Caption stats
   const chars = editText.length
@@ -783,6 +862,40 @@ export function Captions() {
                 <div className="absolute bottom-0 left-0 right-0 px-3 py-1.5 bg-gradient-to-t from-black/70 to-transparent">
                   <p className="text-[11px] text-white/80 truncate">{activeAsset.filename}</p>
                 </div>
+              </div>
+
+              {/* Target model + strategy */}
+              <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-surface-elevated">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] uppercase tracking-wide text-text-secondary">Target model</span>
+                  <select
+                    value={targetModel}
+                    onChange={(e) => handleTargetModelChange(e.target.value as TargetModel)}
+                    className="text-xs py-1 px-2"
+                  >
+                    {TARGET_MODELS.map((model) => (
+                      <option key={model.value} value={model.value}>{model.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="flex items-center gap-1.5 text-[11px] text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={characterMode}
+                    onChange={(e) => handleCharacterModeChange(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  Character mode
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0 bg-surface">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface-elevated border border-border text-text-secondary">
+                  Tagger: {selectedTargetMeta.recommendedTagger}
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface-elevated border border-border text-text-secondary">
+                  Export: {selectedTargetMeta.exportFormat}
+                </span>
               </div>
 
               {/* Style tabs */}

@@ -92,7 +92,8 @@ class LLaVANextProvider(CaptionProvider):
             from PIL import Image
 
             t0 = time.monotonic()
-            prompt_text = STYLE_PROMPTS.get(style, STYLE_PROMPTS["training_literal"])
+            opts = options or {}
+            prompt_text = str(opts.get("prompt") or STYLE_PROMPTS.get(style, STYLE_PROMPTS["training_literal"]))
             conversation = [
                 {"role": "user", "content": [
                     {"type": "image"},

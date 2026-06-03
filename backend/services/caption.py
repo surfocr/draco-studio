@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from models.asset import Asset
 from models.caption import CaptionVersion
+from services.caption_strategy import build_model_aware_prompt
 from services.runtime_config import resolve_provider_for_task
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,17 @@ class CaptionService:
         merged_options = dict(resolved.options)
         if options:
             merged_options.update(options)
+
+        target_model = str(merged_options.get("target_model") or "flux_1")
+        character_mode = bool(merged_options.get("character_mode"))
+        provider_prompt = provider.get_prompt_for_style(style, None)
+        if not (options and options.get("prompt")):
+            merged_options["prompt"] = build_model_aware_prompt(
+                style=style,
+                target_model=target_model,
+                character_mode=character_mode,
+                provider_prompt=provider_prompt,
+            )
 
         result = await provider.generate(asset.filepath, style, merged_options)
         if not result.text:

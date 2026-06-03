@@ -112,7 +112,7 @@ class JoyCaptionProvider(CaptionProvider):
             )
 
         opts = options or {}
-        prompt = JOYCAPTION_STYLE_PROMPTS.get(style, JOYCAPTION_STYLE_PROMPTS["natural"])
+        prompt = str(opts.get("prompt") or JOYCAPTION_STYLE_PROMPTS.get(style, JOYCAPTION_STYLE_PROMPTS["natural"]))
         max_tokens = opts.get("max_tokens", 512)
 
         def _run() -> str:

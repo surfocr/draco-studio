@@ -162,7 +162,7 @@ class QwenVLProvider(CaptionProvider):
             from PIL import Image
 
             pil_img = Image.open(image_path).convert("RGB")
-            user_text = STYLE_MESSAGES.get(style, STYLE_MESSAGES["training_literal"])
+            user_text = str(opts.get("prompt") or STYLE_MESSAGES.get(style, STYLE_MESSAGES["training_literal"]))
 
             # Build Qwen chat messages format
             messages = [{

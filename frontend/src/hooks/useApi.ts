@@ -196,9 +196,9 @@ export const captionsApi = {
       .post<CaptionVersion>(`/api/assets/${assetId}/captions/generate`, { provider, style, options })
       .then((r) => r.data),
 
-  compare: (assetId: string, providers: string[], style: string) =>
+  compare: (assetId: string, providers: string[], style: string, options?: Record<string, unknown>) =>
     api
-      .post<CaptionVersion[]>(`/api/assets/${assetId}/captions/compare`, { providers, style })
+      .post<CaptionVersion[]>(`/api/assets/${assetId}/captions/compare`, { providers, style, options })
       .then((r) => r.data),
 
   activate: (versionId: string) =>

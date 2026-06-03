@@ -9,6 +9,7 @@ from models.project import Project
 from models.project_runtime_config import ProjectRuntimeConfig
 from providers.base import ProviderBase
 from providers.registry import get_registry, safe_register_provider
+from services.runtime_config import DEFAULT_TASK_PROVIDER_OPTIONS
 
 
 class CountingProvider(ProviderBase):
@@ -135,3 +136,9 @@ def test_safe_register_provider_swallows_runtime_import_failures(monkeypatch):
 
     assert registered is False
     assert registry.list_available("caption") == []
+
+
+def test_caption_runtime_defaults_include_target_model_settings():
+    defaults = DEFAULT_TASK_PROVIDER_OPTIONS["caption"]
+    assert defaults["target_model"] == "flux_1"
+    assert defaults["character_mode"] is False
